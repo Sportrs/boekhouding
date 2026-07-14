@@ -1,0 +1,54 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-brand: #3b82f6;
+  --color-success: #22c55e;
+  --color-danger: #ef4444;
+  --color-warning: #f59e0b;
+
+  --color-bg: #0f172a;
+  --color-surface: #1e293b;
+  --color-surface2: #263449;
+  --color-line: #334155;
+  --color-muted: #94a3b8;
+  --color-ink: #e2e8f0;
+  --color-inkdim: #cbd5e1;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Bedragen: monospace, rechts uitgelijnd. */
+.num {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Print: alleen de rapportinhoud tonen. */
+@media print {
+  body {
+    background: #fff;
+    color: #000;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-area {
+    color: #000;
+  }
+}

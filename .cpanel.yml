@@ -1,0 +1,24 @@
+---
+# cPanel Git Version Control voert dit uit bij "Deploy HEAD Commit".
+# Vereist dat de Node.js App-map (Application root) gelijk is aan deze repo-map,
+# en dat er een .env-bestand in de repo-map staat (met o.a. DATABASE_URL).
+#
+# De taak activeert de Node-virtualenv van de app, installeert dependencies,
+# bouwt frontend + server, werkt het databaseschema bij en herstart Passenger
+# via tmp/restart.txt.
+deployment:
+  tasks:
+    - >-
+      /bin/bash -lc '
+      set -e;
+      source ~/nodevenv/boekhouding/*/bin/activate 2>/dev/null
+      || source $(ls -d ~/nodevenv/*/*/bin/activate 2>/dev/null | head -n1) 2>/dev/null
+      || true;
+      echo "Node: $(node -v 2>/dev/null), npm: $(npm -v 2>/dev/null)";
+      npm install --no-audit --no-fund;
+      npm run build;
+      npx prisma db push --skip-generate;
+      mkdir -p tmp;
+      touch tmp/restart.txt;
+      echo "Deploy klaar.";
+      '
