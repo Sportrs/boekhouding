@@ -104,6 +104,7 @@
     { hash: '#/journaal', label: 'Journaal', ic: '≣', page: pageJournaal },
     { hash: '#/btw', label: 'BTW-aangifte', ic: '％', page: pageBTW },
     { hash: '#/jaarverslag', label: 'Jaarverslag', ic: '▦', page: pageJaarverslag },
+    { hash: '#/import', label: 'Import', ic: '⇪', page: pageImport },
     { hash: '#/instellingen', label: 'Instellingen', ic: '⚙', page: pageInstellingen },
   ];
 
@@ -315,13 +316,35 @@
 
   // ---------------- Pagina: Jaarverslag ----------------
   async function pageJaarverslag(view) {
-    let s, balans, wenv;
+    let s, balans, wenv, jaarcijfers;
     try {
       s = state.settings || (await api('instellingen'));
-      [balans, wenv] = await Promise.all([api('balans'), api('wenv')]);
+      [balans, wenv, jaarcijfers] = await Promise.all([api('balans'), api('wenv'), api('jaarcijfers')]);
     } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
 
     const lijst = (arr) => arr.map((p) => `<tr><td>${esc(p.nummer)} — ${esc(p.naam)}</td><td class="num" style="color:var(--ink)">${euro(p.saldo)}</td></tr>`).join('');
+
+    let vergelijkendHtml = '';
+    if (jaarcijfers && jaarcijfers.length) {
+      const jaren = [...new Set(jaarcijfers.map((r) => Number(r.jaar)))].sort((a, b) => b - a);
+      const pivot = new Map();
+      jaarcijfers.forEach((r) => {
+        const k = r.soort + '|' + r.sectie + '|' + r.omschrijving;
+        if (!pivot.has(k)) pivot.set(k, { soort: r.soort, sectie: r.sectie, oms: r.omschrijving, vals: {} });
+        pivot.get(k).vals[Number(r.jaar)] = Number(r.bedrag);
+      });
+      const rowsFor = (soort, sectie) => [...pivot.values()].filter((p) => p.soort === soort && p.sectie === sectie)
+        .map((p) => `<tr><td>${esc(p.oms)}</td>${jaren.map((j) => `<td class="num">${euro(p.vals[j] || 0)}</td>`).join('')}</tr>`).join('');
+      const th = `<tr><th>Post</th>${jaren.map((j) => `<th class="r">${j}</th>`).join('')}</tr>`;
+      const blok = (titel, soort, secties) => `<div><h4>${titel}</h4><table class="jl"><thead>${th}</thead><tbody>${secties.map((s) => rowsFor(soort, s)).join('')}</tbody></table></div>`;
+      vergelijkendHtml = `<div class="card" style="margin-bottom:24px">
+        <div class="card-head">Vergelijkende cijfers uit geïmporteerde jaarrekening(en)</div>
+        <div class="split">
+          ${blok('Balans', 'balans', ['activa', 'passiva'])}
+          ${blok('Winst &amp; verlies', 'wenv', ['opbrengsten', 'kosten'])}
+        </div></div>`;
+    }
+
     view.innerHTML = `
       ${pageHead('Jaarverslag', `${esc(s.bedrijfsnaam || 'BV')} — boekjaar ${esc(s.boekjaar)}`, `<button class="btn btn-ghost no-print" id="print">🖨 Printen</button>`)}
       <div class="card" style="margin-bottom:24px">
@@ -347,6 +370,7 @@
           <span class="num ${wenv.resultaat >= 0 ? 'suc' : 'dan'}" style="font-size:18px;font-weight:700">${euro(wenv.resultaat)}</span>
         </div>
       </div>
+      ${vergelijkendHtml}
       <div class="card p5 mut" style="font-size:14px;line-height:1.6">
         Deze rapportage is een interne weergave van de financiële positie van ${esc(s.bedrijfsnaam || 'de vennootschap')} per ${datumNL(balans.datum)}
         en het resultaat over boekjaar ${esc(s.boekjaar)}. Controle: totaal activa (${euro(balans.totaalActiva)}) is gelijk aan totaal passiva inclusief
@@ -421,6 +445,155 @@
       try { await api('reset', { bevestig: 'RESET' }, 'POST'); toast('Boekhouding gereset'); await loadSettings(); renderShell(); location.hash = '#/instellingen'; }
       catch (e) { toast(e.message, 'error'); }
     });
+  }
+
+  // ---------------- Pagina: Import (jaarrekening) ----------------
+  async function pageImport(view) {
+    let data = null; // geëxtraheerde, bewerkbare jaarrekening
+
+    function fileToB64(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(',')[1] || '');
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+    }
+
+    const sum = (list, type) =>
+      round2(list.filter((p) => p.type === type).reduce((s, p) => s + (Number(p.bedragHuidig) || 0), 0));
+
+    function syncSectie(p) {
+      if (p.type === 'actief') p.sectie = 'activa';
+      else if (p.type === 'passief') p.sectie = 'passiva';
+      else if (p.type === 'kosten') p.sectie = 'kosten';
+      else if (p.type === 'opbrengsten') p.sectie = 'opbrengsten';
+    }
+
+    function rijHtml(list, i, typeOpties) {
+      const p = data[list][i];
+      const opts = typeOpties.map((t) => `<option value="${t}" ${p.type === t ? 'selected' : ''}>${t}</option>`).join('');
+      return `<tr>
+        <td style="padding:4px 8px"><input data-l="${list}" data-i="${i}" data-f="rekeningnummer" value="${esc(p.rekeningnummer)}" style="width:80px" /></td>
+        <td style="padding:4px 8px"><input data-l="${list}" data-i="${i}" data-f="omschrijving" value="${esc(p.omschrijving)}" /></td>
+        <td style="padding:4px 8px"><select data-l="${list}" data-i="${i}" data-f="type" style="width:120px">${opts}</select></td>
+        <td style="padding:4px 8px"><input class="num" data-l="${list}" data-i="${i}" data-f="bedragHuidig" value="${p.bedragHuidig}" style="width:100px" /></td>
+        <td style="padding:4px 8px"><input class="num" data-l="${list}" data-i="${i}" data-f="bedragVorig" value="${p.bedragVorig}" style="width:100px" /></td>
+        <td style="padding:4px 8px" class="r"><button class="linkbtn del" data-del-l="${list}" data-del-i="${i}">✕</button></td>
+      </tr>`;
+    }
+
+    function tabel(titel, list, filterType, typeOpties) {
+      const idx = data[list].map((p, i) => i).filter((i) => typeOpties.includes(data[list][i].type) && (filterType ? data[list][i].type === filterType : true));
+      const rows = idx.map((i) => rijHtml(list, i, typeOpties)).join('') || `<tr><td colspan="6" class="empty">—</td></tr>`;
+      return `<div style="margin-bottom:8px"><div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:8px 0 4px">${titel}</div>
+        <table><thead><tr><th style="padding:4px 8px">Nr.</th><th style="padding:4px 8px">Omschrijving</th><th style="padding:4px 8px">Type</th><th class="r" style="padding:4px 8px">${data.boekjaar}</th><th class="r" style="padding:4px 8px">${data.vergelijkingsjaar}</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table>
+        <button class="linkbtn" data-add="${list}" data-add-type="${typeOpties[0]}" style="margin-top:4px">+ regel</button></div>`;
+    }
+
+    function renderPreview() {
+      const ta = sum(data.balans, 'actief');
+      const tp = sum(data.balans, 'passief');
+      const inBalans = Math.abs(ta - tp) < 0.005;
+      const to = sum(data.wenv, 'opbrengsten');
+      const tk = sum(data.wenv, 'kosten');
+      view.innerHTML =
+        pageHead('Jaarrekening importeren', `${esc(data.bedrijfsnaam || '')} — boekjaar ${data.boekjaar} (vergelijking ${data.vergelijkingsjaar})`,
+          `<button class="btn btn-ghost" id="opnieuw">Ander bestand</button>`) +
+        `<div class="card p5" style="margin-bottom:16px">
+          <div style="font-size:14px;font-weight:500;color:var(--inkdim);margin-bottom:4px">Balans — beginbalans ${Number(data.boekjaar) + 1} komt uit kolom ${data.boekjaar}</div>
+          <p class="mut" style="font-size:12px;margin:0 0 12px">Controleer de posten en bedragen. Balansposten worden aangemaakt als rekening met dit beginsaldo; W&V-posten als kosten-/opbrengstrekening.</p>
+          ${tabel('Activa', 'balans', 'actief', ['actief', 'passief'])}
+          ${tabel('Passiva', 'balans', 'passief', ['actief', 'passief'])}
+          <div style="display:flex;gap:24px;margin-top:8px;font-size:14px">
+            <span>Totaal activa: <b class="num">${euro(ta)}</b></span>
+            <span>Totaal passiva: <b class="num">${euro(tp)}</b></span>
+            <span class="${inBalans ? 'suc' : 'dan'}">${inBalans ? '✓ in balans' : '✗ verschil ' + euro(ta - tp)}</span>
+          </div>
+        </div>
+        <div class="card p5" style="margin-bottom:16px">
+          <div style="font-size:14px;font-weight:500;color:var(--inkdim);margin-bottom:8px">Winst- &amp; verliesrekening</div>
+          ${tabel('Opbrengsten', 'wenv', 'opbrengsten', ['opbrengsten', 'kosten'])}
+          ${tabel('Kosten', 'wenv', 'kosten', ['opbrengsten', 'kosten'])}
+          <div style="display:flex;gap:24px;margin-top:8px;font-size:14px">
+            <span>Opbrengsten ${data.boekjaar}: <b class="num">${euro(to)}</b></span>
+            <span>Kosten ${data.boekjaar}: <b class="num">${euro(tk)}</b></span>
+            <span>Resultaat: <b class="num ${to - tk >= 0 ? 'suc' : 'dan'}">${euro(to - tk)}</b></span>
+          </div>
+        </div>
+        <div class="card p5" style="margin-bottom:16px">
+          <label class="field" style="max-width:280px"><span>Compensabel verlies (memo)</span><input class="num" id="verlies" value="${data.compensabeleVerliezen || 0}" /></label>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-success" id="importeer">Importeren ✓</button>
+          <span class="mut" style="align-self:center;font-size:13px">${inBalans ? '' : 'Let op: balans sluit niet — je kunt toch importeren, maar controleer de posten.'}</span>
+        </div>`;
+
+      // Waarde-edits: model bijwerken + totalen live (zonder herteken).
+      view.querySelectorAll('input[data-f], select[data-f]').forEach((el) => {
+        const upd = () => {
+          const p = data[el.dataset.l][Number(el.dataset.i)];
+          const f = el.dataset.f;
+          if (f === 'bedragHuidig' || f === 'bedragVorig') p[f] = Number(String(el.value).replace(',', '.')) || 0;
+          else p[f] = el.value;
+          if (f === 'type') { syncSectie(p); renderPreview(); }
+          else if (f === 'bedragHuidig') renderPreview();
+        };
+        el.addEventListener('change', upd);
+      });
+      view.querySelectorAll('[data-del-l]').forEach((b) => b.addEventListener('click', () => {
+        data[b.dataset.delL].splice(Number(b.dataset.delI), 1);
+        renderPreview();
+      }));
+      view.querySelectorAll('[data-add]').forEach((b) => b.addEventListener('click', () => {
+        const t = b.dataset.addType;
+        data[b.dataset.add].push({ sectie: '', omschrijving: '', rekeningnummer: '', type: t, bedragHuidig: 0, bedragVorig: 0 });
+        renderPreview();
+      }));
+      document.getElementById('opnieuw').addEventListener('click', () => { data = null; renderUpload(); });
+      document.getElementById('verlies').addEventListener('change', (e) => { data.compensabeleVerliezen = Number(String(e.target.value).replace(',', '.')) || 0; });
+      document.getElementById('importeer').addEventListener('click', importeer);
+    }
+
+    async function importeer() {
+      try {
+        const r = await api('jaarrekening_importeren', data, 'POST');
+        toast(`Geïmporteerd ✓ — ${r.rekeningen} rekeningen, beginbalans ${Number(r.boekjaar) + 1}`);
+        await loadSettings();
+        renderShell();
+        location.hash = '#/jaarverslag';
+      } catch (e) { toast(e.message, 'error'); }
+    }
+
+    function renderUpload() {
+      view.innerHTML =
+        pageHead('Import', 'Lees de jaarrekening van vorig jaar in om beginbalansen, rekeningschema en vergelijkende cijfers over te nemen.') +
+        `<div class="card dropzone" id="drop"><div class="big">📑</div>
+          <div id="dropText"><div style="color:var(--ink)">Sleep de jaarrekening-PDF hierheen of klik om te kiezen</div>
+          <div class="mut" style="font-size:14px;margin-top:4px">De AI leest balans + W&V uit; jij controleert vóór importeren.</div></div>
+          <input type="file" id="file" accept="application/pdf" style="display:none" /></div>`;
+      const drop = document.getElementById('drop');
+      const fi = document.getElementById('file');
+      const dt = document.getElementById('dropText');
+      drop.addEventListener('click', () => fi.click());
+      drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+      drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+      drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) lees(e.dataTransfer.files[0]); });
+      fi.addEventListener('change', () => { if (fi.files[0]) lees(fi.files[0]); });
+      async function lees(file) {
+        if (file.type !== 'application/pdf') return toast('Alleen PDF-bestanden', 'error');
+        dt.innerHTML = '<div class="brand">Jaarrekening wordt uitgelezen door de AI… (dit kan ~20 sec duren)</div>';
+        try {
+          data = await api('jaarrekening_lezen', { pdf: await fileToB64(file) }, 'POST');
+          data.balans = data.balans || [];
+          data.wenv = data.wenv || [];
+          renderPreview();
+        } catch (e) { toast(e.message, 'error'); dt.innerHTML = '<div class="dan">' + esc(e.message) + '</div>'; }
+      }
+    }
+
+    renderUpload();
   }
 
   // ---------------- Modal: Boeking ----------------

@@ -12,6 +12,7 @@ require __DIR__ . '/config.php';
 require __DIR__ . '/includes/auth.php';
 require __DIR__ . '/includes/boekhouding.php';
 require __DIR__ . '/includes/ai.php';
+require __DIR__ . '/includes/import.php';
 
 set_exception_handler(function (Throwable $e): void {
     error_log('Boekhouding fout: ' . $e->getMessage());
@@ -195,6 +196,23 @@ switch ($actie) {
             json_response(['fout' => $e->getMessage()], 502);
         }
     }
+
+    // ---------------- Import jaarrekening (fase 1) ----------------
+    case 'jaarrekening_lezen': {
+        $pdf = (string) ($in['pdf'] ?? '');
+        if (strlen($pdf) < 100) json_response(['fout' => 'Geen geldige PDF (base64) ontvangen'], 422);
+        try {
+            json_response(ai_lees_jaarrekening($pdf));
+        } catch (Throwable $e) {
+            json_response(['fout' => $e->getMessage()], 502);
+        }
+    }
+
+    case 'jaarrekening_importeren':
+        json_response(import_jaarrekening_commit($in));
+
+    case 'jaarcijfers':
+        json_response(jaarcijfers_ophalen());
 
     // ---------------- Rapporten ----------------
     case 'dashboard':

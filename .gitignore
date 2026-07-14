@@ -8,3 +8,6 @@ error_log
 
 # Node-restant / lokale env
 .env
+
+# Privé brondocumenten (jaarrekeningen, bankafschriften) — NOOIT naar repo/server
+assets/documenten/

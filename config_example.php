@@ -18,7 +18,8 @@ define('ADMIN_WACHTWOORD', 'CHANGE_ME');   // wachtwoord om in te loggen
 
 // ---- Anthropic (AI-factuurlezer) ------------------------------------
 define('ANTHROPIC_API_KEY', '');           // sk-ant-... (leeg = uitlezen uit)
-define('BOEKHOUDING_AI_MODEL', 'claude-haiku-4-5-20251001');
+define('BOEKHOUDING_AI_MODEL', 'claude-haiku-4-5-20251001');        // facturen (goedkoop)
+define('BOEKHOUDING_AI_MODEL_IMPORT', 'claude-sonnet-5');           // jaarrekening-import (nauwkeurig)
 
 // ---------------------------------------------------------------------
 // PDO-verbinding (singleton)

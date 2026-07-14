@@ -79,6 +79,15 @@ Doe daarna stap 4 (`config.php` in `public_html/boekhouding/`) en open dan
 
 Klaar — `config.php` en je data blijven staan.
 
+### Database-migraties
+
+Nieuwe features kunnen tabellen toevoegen. Draai bij zo'n update eenmalig het
+bijbehorende script uit `migraties/` via **phpMyAdmin → Import** op je database.
+Reeds gedraaide migraties zijn idempotent (`CREATE TABLE IF NOT EXISTS`), dus
+opnieuw draaien kan geen kwaad.
+
+- `migraties/001_jaarcijfers.sql` — tabel `jaarcijfers` (voor de jaarrekening-import).
+
 ---
 
 ## Problemen oplossen
