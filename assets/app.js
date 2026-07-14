@@ -104,6 +104,7 @@
     { hash: '#/', label: 'Dashboard', ic: '▤', page: pageDashboard },
     { hash: '#/facturen', label: 'Facturen invoeren', ic: '＋', page: pageFacturen },
     { hash: '#/journaal', label: 'Journaal', ic: '≣', page: pageJournaal },
+    { hash: '#/grootboek', label: 'Grootboek', ic: '☰', page: pageGrootboek },
     { hash: '#/btw', label: 'BTW-aangifte', ic: '％', page: pageBTW },
     { hash: '#/jaarverslag', label: 'Jaarverslag', ic: '▦', page: pageJaarverslag },
     { hash: '#/import', label: 'Import', ic: '⇪', page: pageImport },
@@ -267,6 +268,30 @@
       }));
     }
     rerender();
+  }
+
+  // ---------------- Pagina: Grootboek ----------------
+  async function pageGrootboek(view) {
+    let rows;
+    try { rows = await api('grootboek'); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    const groepen = [['actief', 'Activa'], ['passief', 'Passiva'], ['opbrengsten', 'Opbrengsten'], ['kosten', 'Kosten']];
+    const kaartFor = (type, label) => {
+      const r = rows.filter((a) => a.type === type);
+      if (!r.length) return '';
+      const body = r.map((a) => `<tr class="klik" data-kaart="${esc(a.nummer)}">
+          <td class="num" style="text-align:left">${esc(a.nummer)}</td>
+          <td>${esc(a.naam)}${a.systeem ? '<span class="badge">systeem</span>' : ''}</td>
+          <td class="num" style="color:var(--ink)">${euro(a.saldo)}</td></tr>`).join('');
+      const tot = r.reduce((s, a) => s + Number(a.saldo), 0);
+      return `<div class="card" style="margin-bottom:16px"><div class="card-head">${label}</div>
+        <table><thead><tr><th>Nr.</th><th>Rekening</th><th class="r">Saldo</th></tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr><td></td><td style="font-weight:500;color:var(--inkdim)">Totaal ${esc(label.toLowerCase())}</td><td class="num" style="font-weight:600">${euro(tot)}</td></tr></tfoot></table></div>`;
+    };
+    const html = groepen.map(([t, l]) => kaartFor(t, l)).join('');
+    view.innerHTML = pageHead('Grootboek', 'Klik een rekening om de opbouw te zien (grootboekkaart).') +
+      (html || `<div class="card p5 mut">Nog geen rekeningen.</div>`);
+    view.querySelectorAll('[data-kaart]').forEach((el) => el.addEventListener('click', () => openKaart(el.dataset.kaart)));
   }
 
   // ---------------- Pagina: BTW ----------------

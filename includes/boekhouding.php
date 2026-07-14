@@ -286,6 +286,36 @@ function bh_dashboard(): array {
 }
 
 // ---------------------------------------------------------------------
+// Grootboek: alle rekeningen met hun huidige saldo (voor het boekjaar).
+//   balans (actief/passief): opening + bewegingen t/m einde boekjaar
+//   W&V (kosten/opbrengsten): bewegingen binnen het boekjaar
+// ---------------------------------------------------------------------
+function bh_grootboek(): array {
+    $boekjaar = bh_boekjaar();
+    $start = $boekjaar . '-01-01';
+    $eind  = $boekjaar . '-12-31';
+    $rek = bh_rekeningen();
+    $tx  = bh_transacties();
+    $bewTot = bh_bewegingen($tx, null, $eind);
+    $bewBj  = bh_bewegingen($tx, $start, $eind);
+
+    $out = [];
+    foreach ($rek as $a) {
+        $balans = ($a['type'] === 'actief' || $a['type'] === 'passief');
+        $bew = $balans ? ($bewTot[$a['nummer']] ?? ['debet' => 0.0, 'credit' => 0.0])
+                       : ($bewBj[$a['nummer']]  ?? ['debet' => 0.0, 'credit' => 0.0]);
+        $out[] = [
+            'nummer'  => $a['nummer'],
+            'naam'    => $a['naam'],
+            'type'    => $a['type'],
+            'systeem' => $a['systeem'],
+            'saldo'   => bh_saldo($a, $bew, $balans),
+        ];
+    }
+    return $out;
+}
+
+// ---------------------------------------------------------------------
 // Grootboekkaart / verloop per rekening (live boekjaar)
 //   beginsaldo + mutaties (journaalposten) -> eindsaldo
 // ---------------------------------------------------------------------

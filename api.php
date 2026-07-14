@@ -217,6 +217,9 @@ switch ($actie) {
     case 'toelichtingen':
         json_response(toelichtingen_ophalen());
 
+    case 'grootboek':
+        json_response(bh_grootboek());
+
     case 'grootboekkaart': {
         $nr = trim((string) ($in['nummer'] ?? ''));
         if ($nr === '') json_response(['fout' => 'nummer vereist'], 422);
