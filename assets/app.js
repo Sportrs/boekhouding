@@ -283,7 +283,7 @@
       if (!r.length) return '';
       const body = r.map((a) => `<tr class="klik" data-kaart="${esc(a.nummer)}">
           <td class="num" style="text-align:left">${esc(a.nummer)}</td>
-          <td>${esc(a.naam)}${a.systeem ? '<span class="badge">systeem</span>' : ''}</td>
+          <td>${esc(a.naam)}${a.systeem ? '<span class="badge">systeem</span>' : ''}${a.isBank ? '<span class="badge" style="color:var(--brand)">bank</span>' : ''}</td>
           <td class="num" style="color:var(--ink)">${euro(a.saldo)}</td></tr>`).join('');
       const tot = r.reduce((s, a) => s + Number(a.saldo), 0);
       return `<div class="card" style="margin-bottom:16px"><div class="card-head">${label}</div>
@@ -302,7 +302,7 @@
     let filter = 'open';
     function bankRekening() {
       const b = state.accounts.filter((a) => a.type === 'actief' && !a.systeem);
-      return (b.find((a) => /bunq|bank/i.test(a.naam)) || b[0] || {}).nummer || '';
+      return (b.find((a) => a.isBank) || b.find((a) => /bunq|bank/i.test(a.naam)) || b[0] || {}).nummer || '';
     }
     function boekVanBank(line) {
       const regime = line.btw_regime || '21';
@@ -566,7 +566,7 @@
     const TYPE = { actief: 'Actief', passief: 'Passief', kosten: 'Kosten', opbrengsten: 'Opbrengsten' };
     const rekRows = state.accounts.map((a) => `<tr>
         <td class="num klik" style="text-align:left" data-kaart="${esc(a.nummer)}" title="Bekijk verloop / grootboekkaart">${esc(a.nummer)}</td>
-        <td class="klik" data-kaart="${esc(a.nummer)}">${esc(a.naam)}${a.systeem ? '<span class="badge">systeem</span>' : ''}</td>
+        <td class="klik" data-kaart="${esc(a.nummer)}">${esc(a.naam)}${a.systeem ? '<span class="badge">systeem</span>' : ''}${a.isBank ? '<span class="badge" style="color:var(--brand)">bank</span>' : ''}</td>
         <td class="mut">${TYPE[a.type] || a.type}</td>
         <td class="num">${a.type === 'actief' || a.type === 'passief' ? euro(a.openingSaldo) : '—'}</td>
         <td class="r"><button class="linkbtn" data-edit="${esc(a.nummer)}">bewerken</button>${a.systeem ? '' : ` <button class="linkbtn del" data-del="${esc(a.nummer)}">verwijderen</button>`}</td>
@@ -806,7 +806,7 @@
       bedrag: initial && initial.bedragExBTW != null ? String(initial.bedragExBTW) : '',
       pct: (initial && initial.btwRegime === 'geen') ? 'geen' : (initial && initial.btwPercentage != null ? String(initial.btwPercentage) : '21'),
       grootboek: (initial && initial.grootboekrekening) || (kosten[0] ? kosten[0].nummer : ''),
-      betaal: (opts.betaal) || (banken.find((a) => /bank|bunq/i.test(a.naam)) || banken[0] || {}).nummer || '',
+      betaal: (opts.betaal) || (banken.find((a) => a.isBank) || banken.find((a) => /bank|bunq/i.test(a.naam)) || banken[0] || {}).nummer || '',
     };
 
     const ov = document.createElement('div');
@@ -914,6 +914,7 @@
       naam: account ? account.naam : '',
       type: account ? account.type : 'kosten',
       opening: account && account.openingSaldo != null ? String(account.openingSaldo) : '0',
+      isBank: account ? !!account.isBank : false,
     };
     const TYPES = [['actief', 'Actief (bezitting)'], ['passief', 'Passief (schuld/eigen vermogen)'], ['kosten', 'Kosten'], ['opbrengsten', 'Opbrengsten']];
     const ov = document.createElement('div');
@@ -928,6 +929,7 @@
           <label class="field"><span>Naam</span><input id="naam" value="${esc(st.naam)}" /></label>
           <label class="field"><span>Type</span><select id="type" ${account && account.systeem ? 'disabled' : ''}>${TYPES.map((t) => `<option value="${t[0]}" ${st.type === t[0] ? 'selected' : ''}>${t[1]}</option>`).join('')}</select></label>
           ${balans ? `<label class="field"><span>Beginsaldo (natuurlijk saldo)</span><input class="num" id="opening" value="${esc(st.opening)}" /></label>` : ''}
+          ${st.type === 'actief' ? `<label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--inkdim)"><input type="checkbox" id="isbank" ${st.isBank ? 'checked' : ''} style="width:auto" /> Bank-/kasrekening (voor banksaldo &amp; bankimport)</label>` : ''}
         </div>
         <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Opslaan</button></div></div>`;
       ov.querySelector('.x').onclick = close;
@@ -936,6 +938,7 @@
       if (!bewerken) ov.querySelector('#nr').oninput = (e) => st.nummer = e.target.value;
       ov.querySelector('#type').onchange = (e) => { st.type = e.target.value; render(); };
       const op = ov.querySelector('#opening'); if (op) op.oninput = (e) => st.opening = e.target.value;
+      const cb = ov.querySelector('#isbank'); if (cb) cb.onchange = (e) => st.isBank = e.target.checked;
       ov.querySelector('#opslaan').onclick = opslaan;
     }
     async function opslaan() {
@@ -943,7 +946,7 @@
       if (!st.naam.trim()) return toast('Naam is verplicht', 'error');
       const balans = st.type === 'actief' || st.type === 'passief';
       try {
-        await api('rekening_opslaan', { nieuw: !bewerken, nummer: st.nummer, naam: st.naam, type: st.type, openingSaldo: balans ? Number(String(st.opening).replace(',', '.')) || 0 : 0 }, 'POST');
+        await api('rekening_opslaan', { nieuw: !bewerken, nummer: st.nummer, naam: st.naam, type: st.type, isBank: st.isBank, openingSaldo: balans ? Number(String(st.opening).replace(',', '.')) || 0 : 0 }, 'POST');
         toast('Rekening opgeslagen ✓'); close(); renderRoute();
       } catch (e) { toast(e.message, 'error'); }
     }

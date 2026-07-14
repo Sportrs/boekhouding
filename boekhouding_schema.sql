@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS rekeningen (
   naam          VARCHAR(160)   NOT NULL,
   type          VARCHAR(20)    NOT NULL,                 -- actief|passief|kosten|opbrengsten
   systeem       TINYINT(1)     NOT NULL DEFAULT 0,       -- 1 = niet verwijderbaar (BTW)
+  is_bank       TINYINT(1)     NOT NULL DEFAULT 0,       -- 1 = bank-/kasrekening (liquide middelen)
   opening_saldo DECIMAL(12,2)  NOT NULL DEFAULT 0.00,    -- natural balance
   PRIMARY KEY (id),
   UNIQUE KEY uq_rek_nummer (nummer)

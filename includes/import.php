@@ -197,6 +197,10 @@ function import_jaarrekening_commit(array $in): array {
         )->execute($importedNrs);
     }
 
+    // Markeer bank-/kasrekeningen (liquide middelen) automatisch, zodat het
+    // banksaldo en "betaald via" ze herkennen ook zonder "bank" in de naam.
+    db()->exec("UPDATE rekeningen SET is_bank = 1 WHERE type = 'actief' AND (naam LIKE '%bank%' OR naam LIKE '%bunq%' OR naam LIKE '%ING%' OR naam LIKE '%liquide%' OR naam LIKE '%kas%' OR naam LIKE '%giro%')");
+
     // 3) Toelichtingen (verloop) + deelnemingen — vervang voor het boekjaar.
     db()->prepare("DELETE FROM toelichtingen WHERE jaar = :j")->execute([':j' => $boekjaar]);
     $ti = db()->prepare("INSERT INTO toelichtingen (jaar, soort, rekeningnummer, post, label, bedrag, tekst, volgorde)

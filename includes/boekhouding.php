@@ -43,10 +43,11 @@ function bh_boekjaar(): string {
 
 // Alle rekeningen (gesorteerd op nummer), met floats.
 function bh_rekeningen(): array {
-    $rows = db()->query("SELECT nummer, naam, type, systeem, opening_saldo FROM rekeningen ORDER BY nummer ASC")
+    $rows = db()->query("SELECT nummer, naam, type, systeem, is_bank, opening_saldo FROM rekeningen ORDER BY nummer ASC")
         ->fetchAll();
     foreach ($rows as &$r) {
         $r['systeem']       = (bool) $r['systeem'];
+        $r['isBank']        = (bool) $r['is_bank'];
         $r['openingSaldo']  = (float) $r['opening_saldo'];
     }
     return $rows;
@@ -263,13 +264,16 @@ function bh_dashboard(): array {
     $wenv = bh_wenv($start, $eind);
 
     $bew = bh_bewegingen($tx, null, $eind);
+    // Bankrekeningen: gemarkeerde is_bank-rekeningen; anders terugval op naam.
+    $bankAcc = array_filter($rek, fn($a) => !empty($a['isBank']));
+    if (!$bankAcc) {
+        $bankAcc = array_filter($rek, fn($a) => $a['type'] === 'actief' && preg_match('/bank|bunq|liquide|ing|kas|giro/i', $a['naam']));
+    }
     $bankNummers = [];
     $banksaldo = 0.0;
-    foreach ($rek as $a) {
-        if ($a['type'] === 'actief' && preg_match('/bank/i', $a['naam'])) {
-            $bankNummers[] = $a['nummer'];
-            $banksaldo += bh_saldo($a, $bew[$a['nummer']] ?? ['debet' => 0.0, 'credit' => 0.0]);
-        }
+    foreach ($bankAcc as $a) {
+        $bankNummers[] = $a['nummer'];
+        $banksaldo += bh_saldo($a, $bew[$a['nummer']] ?? ['debet' => 0.0, 'credit' => 0.0]);
     }
 
     $kwartaal = (int) floor(((int) date('n') - 1) / 3) + 1;
@@ -312,6 +316,7 @@ function bh_grootboek(): array {
             'naam'    => $a['naam'],
             'type'    => $a['type'],
             'systeem' => $a['systeem'],
+            'isBank'  => $a['isBank'],
             'saldo'   => bh_saldo($a, $bew, $balans),
         ];
     }

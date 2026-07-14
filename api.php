@@ -78,6 +78,7 @@ switch ($actie) {
         $naam   = trim((string) ($in['naam'] ?? ''));
         $type   = (string) ($in['type'] ?? '');
         $opening = centen((float) ($in['openingSaldo'] ?? 0));
+        $isBank = (!empty($in['isBank']) && $type === 'actief') ? 1 : 0;
 
         if ($nummer === '') json_response(['fout' => 'Rekeningnummer is verplicht'], 422);
         if ($naam === '')   json_response(['fout' => 'Naam is verplicht'], 422);
@@ -89,16 +90,16 @@ switch ($actie) {
 
         if ($nieuw) {
             if ($rij) json_response(['fout' => 'Er bestaat al een rekening met dit nummer'], 409);
-            db()->prepare("INSERT INTO rekeningen (nummer, naam, type, systeem, opening_saldo)
-                           VALUES (:nr, :naam, :type, 0, :o)")
-                ->execute([':nr' => $nummer, ':naam' => $naam, ':type' => $type, ':o' => $opening]);
+            db()->prepare("INSERT INTO rekeningen (nummer, naam, type, systeem, is_bank, opening_saldo)
+                           VALUES (:nr, :naam, :type, 0, :ib, :o)")
+                ->execute([':nr' => $nummer, ':naam' => $naam, ':type' => $type, ':ib' => $isBank, ':o' => $opening]);
         } else {
             if (!$rij) json_response(['fout' => 'Rekening niet gevonden'], 404);
             if ((int) $rij['systeem'] === 1 && $type !== $rij['type']) {
                 json_response(['fout' => 'Type van een systeemrekening kan niet wijzigen'], 422);
             }
-            db()->prepare("UPDATE rekeningen SET naam = :naam, type = :type, opening_saldo = :o WHERE nummer = :nr")
-                ->execute([':naam' => $naam, ':type' => $type, ':o' => $opening, ':nr' => $nummer]);
+            db()->prepare("UPDATE rekeningen SET naam = :naam, type = :type, is_bank = :ib, opening_saldo = :o WHERE nummer = :nr")
+                ->execute([':naam' => $naam, ':type' => $type, ':ib' => $isBank, ':o' => $opening, ':nr' => $nummer]);
         }
         json_response(['ok' => true]);
     }
