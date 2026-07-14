@@ -334,14 +334,31 @@ function bh_grootboekkaart(string $nummer, ?string $from = null, ?string $to = n
     $loop = $begin;
     foreach ($regels as &$rg) { $loop = centen($loop + $rg['delta']); $rg['saldo'] = $loop; }
 
+    // Historisch verloop uit de geïmporteerde jaarrekening (toelichting):
+    // Stand 1-1 + mutaties -> Stand 31-12 van het vorige boekjaar (= beginsaldo nu).
+    $h = db()->prepare(
+        "SELECT jaar, label, bedrag FROM toelichtingen
+         WHERE soort = 'verloop' AND (rekeningnummer = :nr OR post = :naam)
+         ORDER BY volgorde"
+    );
+    $h->execute([':nr' => $nummer, ':naam' => $rek['naam']]);
+    $historie = [];
+    $historieJaar = null;
+    foreach ($h->fetchAll() as $hr) {
+        $historieJaar = (int) $hr['jaar'];
+        $historie[] = ['label' => $hr['label'], 'bedrag' => $hr['bedrag'] === null ? null : (float) $hr['bedrag']];
+    }
+
     return [
-        'nummer'    => $rek['nummer'],
-        'naam'      => $rek['naam'],
-        'type'      => $rek['type'],
-        'from'      => $from,
-        'to'        => $to,
-        'beginsaldo'=> $begin,
-        'regels'    => $regels,
-        'eindsaldo' => centen($loop),
+        'nummer'       => $rek['nummer'],
+        'naam'         => $rek['naam'],
+        'type'         => $rek['type'],
+        'from'         => $from,
+        'to'           => $to,
+        'beginsaldo'   => $begin,
+        'regels'       => $regels,
+        'eindsaldo'    => centen($loop),
+        'historie'     => $historie,
+        'historieJaar' => $historieJaar,
     ];
 }

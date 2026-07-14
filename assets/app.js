@@ -331,15 +331,8 @@
     if (toelichtingen && toelichtingen.length) {
       const groep = (rows) => { const m = new Map(); rows.forEach((r) => { if (!m.has(r.post)) m.set(r.post, []); m.get(r.post).push(r); }); return m; };
       const verloopRij = (r) => { const st = /stand/i.test(r.label); const sty = st ? ' style="font-weight:500;color:var(--inkdim)"' : ''; const syn = st ? ' style="color:var(--ink)"' : ''; return `<tr><td class="naam"${sty}>${esc(r.label)}</td><td class="num"${syn}>${euro0(r.bedrag)}</td></tr>`; };
-      const verloop = toelichtingen.filter((r) => r.soort === 'verloop');
       const deeln = toelichtingen.filter((r) => r.soort === 'deelneming');
-      const jaar = ((verloop[0] || deeln[0] || {}).jaar) || '';
 
-      if (verloop.length) {
-        toelichtingHtml += `<div class="card" style="margin-bottom:24px"><div class="card-head">Toelichting — verloop van posten ${jaar}</div><div class="split">` +
-          [...groep(verloop)].map(([post, rows]) => `<div><h4>${esc(post)}</h4><table class="jl"><tbody>${rows.map(verloopRij).join('')}</tbody></table></div>`).join('') +
-          `</div></div>`;
-      }
       if (deeln.length) {
         toelichtingHtml += `<div class="card" style="margin-bottom:24px"><div class="card-head">Deelnemingen</div><div class="card-body" style="display:grid;gap:18px">` +
           [...groep(deeln)].map(([post, rows]) => {
@@ -788,11 +781,21 @@
           <td class="num" style="color:var(--ink)">${euro(r.saldo)}</td></tr>`).join('')
       : `<tr><td colspan="5" class="empty">Nog geen mutaties in ${String(d.from).slice(0, 4)}.</td></tr>`;
 
+    const boekjaar = String(d.to).slice(0, 4);
+    const histRij = (r) => { const st = /stand/i.test(r.label); const sty = st ? ' style="font-weight:500;color:var(--inkdim)"' : ''; const syn = st ? ' style="color:var(--ink)"' : ''; return `<tr><td class="naam"${sty}>${esc(r.label)}</td><td class="num"${syn}>${r.bedrag == null ? '' : euro0(r.bedrag)}</td></tr>`; };
+    const histHtml = (d.historie && d.historie.length)
+      ? `<div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:12px 0 4px">Verloop ${d.historieJaar} (uit jaarrekening)</div>
+         <table class="jl"><tbody>${d.historie.map(histRij).join('')}</tbody></table>
+         <div class="mut" style="font-size:12px;margin:4px 0 0">Eindsaldo ${d.historieJaar} = beginsaldo ${boekjaar}</div>`
+      : '';
+
     ov.querySelector('#kb').innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px">
         <div><b>${esc(d.nummer)} — ${esc(d.naam)}</b> <span class="mut">(${esc(d.type)})</span></div>
         <div class="mut">${datumNL(d.from)} t/m ${datumNL(d.to)}</div>
       </div>
+      ${histHtml}
+      <div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 4px">Boekjaar ${boekjaar}</div>
       <table>
         <thead><tr><th>Datum</th><th>Omschrijving</th><th class="r">Debet</th><th class="r">Credit</th><th class="r">Saldo</th></tr></thead>
         <tbody>

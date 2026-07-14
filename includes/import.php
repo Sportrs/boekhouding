@@ -157,10 +157,14 @@ function import_jaarrekening_commit(array $in): array {
     }
 
     // 2) Rekeningschema + beginbalansen.
+    //    De jaarrekening is de enige bron van de beginbalans: wis eerst alle
+    //    oude beginsaldi, zodat een her-import geen dubbele posten oplevert.
+    db()->exec("UPDATE rekeningen SET opening_saldo = 0");
     $ins = db()->prepare("INSERT INTO rekeningen (nummer, naam, type, systeem, opening_saldo)
                           VALUES (:nr, :naam, :type, 0, :saldo)
                           ON DUPLICATE KEY UPDATE naam = VALUES(naam), opening_saldo = VALUES(opening_saldo)");
     $aangemaakt = 0;
+    $importedNrs = [];
     foreach ([['balans', $balans, true], ['wenv', $wenv, false]] as [$soort, $lijst, $isBalans]) {
         foreach ($lijst as $p) {
             $nr   = trim((string) ($p['rekeningnummer'] ?? ''));
@@ -176,8 +180,21 @@ function import_jaarrekening_commit(array $in): array {
             } else {
                 $ins->execute([':nr' => $nr, ':naam' => $naam, ':type' => $type, ':saldo' => $saldo]);
             }
+            $importedNrs[] = $nr;
             $aangemaakt++;
         }
+    }
+
+    // Ruim wees-rekeningen op: niet-systeem, zonder beginsaldo, niet in deze
+    // jaarrekening én zonder boekingen (bv. dubbelingen uit een eerdere import).
+    if ($importedNrs) {
+        $ph = implode(',', array_fill(0, count($importedNrs), '?'));
+        db()->prepare(
+            "DELETE FROM rekeningen
+             WHERE systeem = 0 AND opening_saldo = 0
+               AND nummer NOT IN ($ph)
+               AND nummer NOT IN (SELECT rekening FROM transactie_regels)"
+        )->execute($importedNrs);
     }
 
     // 3) Toelichtingen (verloop) + deelnemingen — vervang voor het boekjaar.
