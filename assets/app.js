@@ -191,6 +191,7 @@
     view.innerHTML = `
       ${pageHead('Facturen invoeren', 'Upload een PDF om automatisch uit te lezen, of voer handmatig in.',
         `<button class="btn btn-ghost" id="handmatig">Handmatig invoeren</button>`)}
+      <div class="help" style="margin-bottom:16px"><b>Tip:</b> boek je meestal betaalde facturen? Ga dan naar <b>Bank</b>, importeer je afschrift en klik bij de betaling op <b>Boek</b> — daar upload je de PDF én wordt de betaling meteen afgeletterd. Deze pagina is handig voor een losse factuur zonder bankregel.</div>
       <div class="card dropzone" id="drop">
         <div class="big">📄</div>
         <div id="dropText"><div style="color:var(--ink)">Sleep een PDF-factuur hierheen of klik om te kiezen</div>
@@ -316,14 +317,31 @@
     }
     // Overboeking / memoriaal: bankregel boeken tegen een vrije tegenrekening
     // (bv. rekening-courant privé, BTW-betaling, overboeking tussen banken).
+    // Herkent privé/Belastingdienst en stelt de tegenrekening + uitleg voor.
     function memoVanBank(line) {
       const bank = bankRekening();
       const bedrag = round2(Number(line.bedrag));
+      const acc = state.accounts;
+      const tekst = ((line.tegenrekening_naam || '') + ' ' + (line.omschrijving || '')).toLowerCase();
+      const rc = acc.find((a) => /rekening.?courant|aandeelhouder/i.test(a.naam)) || acc.find((a) => /priv[eé]/i.test(a.naam));
+      const heeft1910 = acc.some((a) => a.nummer === '1910');
+      const richting = line.afbij === 'af' ? 'DR de tegenrekening / CR de bank' : 'DR de bank / CR de tegenrekening';
+      let suggest = '', hint = '';
+      if (/priv[eé]|poelmans|aandeelhouder|rekening.?courant/.test(tekst)) {
+        if (rc) { suggest = rc.nummer; hint = `Dit lijkt een <b>overboeking naar privé</b>. Kies als tegenrekening de rekening-courant aandeelhouder: <b>${esc(rc.nummer)} — ${esc(rc.naam)}</b>. Bij geld naar privé neemt je vordering op de aandeelhouder toe (${richting}).`; }
+        else { hint = 'Dit lijkt een <b>overboeking naar privé</b>. Kies je rekening-courant aandeelhouder als tegenrekening (maak die eerst aan onder Instellingen als hij ontbreekt).'; }
+      } else if (/belastingdienst/.test(tekst) && /omzetbelasting|aangifte ob|\bob\b|btw/.test(tekst)) {
+        suggest = heeft1910 ? '1910' : ''; hint = 'Dit lijkt een <b>BTW-betaling aan de Belastingdienst</b>. Kies als tegenrekening <b>1910 BTW te betalen</b> — daarmee loop je de eerder afgedragen BTW-schuld weg (' + richting + ').';
+      } else if (/belastingdienst/.test(tekst)) {
+        hint = 'Betaling aan/van de <b>Belastingdienst</b>. Kies de juiste tegenrekening: <b>1910 BTW te betalen</b> voor omzetbelasting, of een VpB-rekening voor vennootschapsbelasting.';
+      } else {
+        hint = 'Een <b>overboeking</b> is geen kosten/omzet maar een verschuiving. Kies op de lege regel de tegenrekening waar dit geld heen/vandaan ging (bv. een andere bankrekening of de rekening-courant).';
+      }
       const oms = line.leverancier_naam || line.tegenrekening_naam || line.omschrijving || 'Overboeking';
       const regels = line.afbij === 'af'
-        ? [{ rekening: '', debet: bedrag, credit: 0 }, { rekening: bank, debet: 0, credit: bedrag }]
-        : [{ rekening: bank, debet: bedrag, credit: 0 }, { rekening: '', debet: 0, credit: bedrag }];
-      openMemoriaal(laad, { initial: { datum: line.datum, omschrijving: oms, regels }, onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Afgeletterd ✓'); laad(); } });
+        ? [{ rekening: suggest, debet: bedrag, credit: 0 }, { rekening: bank, debet: 0, credit: bedrag }]
+        : [{ rekening: bank, debet: bedrag, credit: 0 }, { rekening: suggest, debet: 0, credit: bedrag }];
+      openMemoriaal(laad, { hint, initial: { datum: line.datum, omschrijving: oms, regels }, onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Afgeletterd ✓'); laad(); } });
     }
     async function laad() {
       let lijst, leveranciers;
@@ -360,11 +378,13 @@
       view.innerHTML =
         pageHead('Bank', 'Importeer je MT940-afschrift en letter betalingen af tegen boekingen.',
           `<button class="btn btn-brand" id="mt940">MT940 importeren</button><input type="file" id="mt940file" accept=".sta,.txt,text/plain" style="display:none" />`) +
-        `<div class="tabs" style="margin-bottom:16px;display:flex;gap:8px">${tabs.map((t) => `<button data-tab="${t}" class="${filter === t ? 'active' : ''}">${t}</button>`).join('')}</div>
+        `<div class="help" style="margin-bottom:16px">Importeer je bankafschrift (MT940 <b>.sta</b>) en behandel elke regel: <b>Boek</b> = een inkoop/verkoopfactuur (upload de PDF, BTW wordt ingevuld) · <b>overboeking</b> = geen factuur maar een verschuiving (naar privé, BTW-betaling, tussen banken) · <b>koppel</b> = aan een boeking die je al had ingevoerd · <b>negeer</b> = niet relevant. Groen "gekoppeld" betekent: klaar.</div>
+        <div class="tabs" style="margin-bottom:16px;display:flex;gap:8px">${tabs.map((t) => `<button data-tab="${t}" class="${filter === t ? 'active' : ''}">${t}</button>`).join('')}</div>
          <div class="card" style="margin-bottom:24px"><table>
            <thead><tr><th>Datum</th><th>Af/bij</th><th class="r">Bedrag</th><th>Tegenrekening</th><th>Omschrijving</th><th>Status</th><th></th></tr></thead>
            <tbody>${rows}</tbody></table></div>
          <div class="card"><div class="card-head"><span>Leveranciers</span><button class="btn btn-brand" id="nieuweLev">+ Leverancier</button></div>
+           <div class="mut" style="padding:12px 20px 0;font-size:12px;line-height:1.5">Leg vaste leveranciers vast met een <b style="color:var(--inkdim)">zoekterm</b> (bv. ANTHROPIC), hun land, het BTW-regime en een standaard kostenrekening. Een betaling in je bankafschrift wordt dan automatisch als die leverancier herkend, zodat "Boek" meteen de juiste kostenrekening en BTW invult — minder klikken, minder fouten.</div>
            <table><thead><tr><th>Naam</th><th>Zoekterm</th><th>Land</th><th>BTW</th><th>Kostenrek.</th><th></th></tr></thead>
            <tbody>${levRows}</tbody></table></div>`;
 
@@ -415,6 +435,7 @@
     const close = () => ov.remove();
     ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>${lev ? 'Leverancier bewerken' : 'Nieuwe leverancier'}</h2><button class="x">✕</button></div>
       <div class="modal-body">
+        <div class="help">Een leverancier laat de app terugkerende betalingen herkennen in je bankafschrift. <b>Zoekterm</b> = een woord dat in de bankregel staat (bv. ANTHROPIC). <b>BTW-regime</b>: 21/9/0% (NL), <b>geen</b> (niet-EU, bv. VS), of <b>verlegd</b> (EU-diensten).</div>
         <label class="field"><span>Naam</span><input id="naam" value="${esc(lev ? lev.naam : '')}" /></label>
         <label class="field"><span>Zoekterm (herkenning in bankregel)</span><input id="zoek" value="${esc(lev ? (lev.zoekterm || '') : '')}" placeholder="bijv. ANTHROPIC of A2WEBHOST" /></label>
         <div class="row">
@@ -873,7 +894,8 @@
             <label class="field"><span>${st.type === 'inkoop' ? 'Kostenrekening' : 'Omzetrekening'}</span><select id="gb">${opties(gbList, st.grootboek)}</select></label>
             <label class="field"><span>Betaald via</span><select id="bet">${opties(banken, st.betaal)}</select></label>
           </div>
-          <div class="preview"><div class="h">Journaalpost-preview</div>
+          <div class="mut" style="font-size:12px;line-height:1.45">BTW-regime: <b style="color:var(--inkdim)">21/9/0%</b> = Nederland · <b style="color:var(--inkdim)">geen (buitenland)</b> = niet-EU (bv. Anthropic, VS) · <b style="color:var(--inkdim)">verlegd (EU)</b> = EU-diensten (bv. Google/Microsoft, Ierland). Weet je het niet zeker? Kies 21% of vraag je boekhouder.</div>
+          <div class="preview"><div class="h">Journaalpost-preview (zo wordt het geboekt)</div>
             <table><thead><tr><th style="padding:4px 16px">Rekening</th><th class="r" style="padding:4px 16px">Debet</th><th class="r" style="padding:4px 16px">Credit</th></tr></thead>
             <tbody id="prev">${preview()}</tbody></table></div>
         </div>
@@ -990,6 +1012,7 @@
         <td style="padding:4px" class="r"><button class="linkbtn del" data-del="${i}">✕</button></td></tr>`).join('');
       ov.innerHTML = `<div class="modal"><div class="modal-head"><h2>Memoriaalboeking</h2><button class="x">✕</button></div>
         <div class="modal-body">
+          ${(opts && opts.hint) ? `<div class="help">${opts.hint}</div>` : ''}
           <div class="row">
             <label class="field"><span>Datum</span><input type="date" id="datum" value="${esc(st.datum)}" /></label>
             <label class="field"><span>Omschrijving</span><input id="oms" value="${esc(st.omschrijving)}" placeholder="bijv. Afschrijving inventaris" /></label>

@@ -165,6 +165,8 @@ input:focus, select:focus { border-color: var(--brand); }
 .jl td.jaar, .jl th.jaar { width: 84px; }
 .klik { cursor: pointer; }
 .klik:hover { color: var(--brand); }
+.help { background: rgba(59,130,246,.1); border: 1px solid rgba(59,130,246,.3); color: var(--inkdim); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.5; }
+.help b { color: var(--ink); font-weight: 600; }
 
 /* Print */
 @media print {
