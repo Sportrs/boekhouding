@@ -224,12 +224,14 @@ function bh_btw(int $kwartaal, int $jaar): array {
     };
     $afdracht21 = fn($t) => $t['btwRichting'] === 'afdracht' && $t['btwCode'] === '21';
     $afdracht9  = fn($t) => $t['btwRichting'] === 'afdracht' && $t['btwCode'] === '9';
-    $vordering  = fn($t) => $t['btwRichting'] === 'vordering';
+    $verlegd    = fn($t) => $t['btwRichting'] === 'verlegd';
+    $voorbelasting = fn($t) => $t['btwRichting'] === 'vordering' || $t['btwRichting'] === 'verlegd';
 
     $r1a = ['grondslag' => $som($afdracht21, 'btwGrondslag'), 'btw' => $som($afdracht21, 'btwBedrag')];
     $r1b = ['grondslag' => $som($afdracht9,  'btwGrondslag'), 'btw' => $som($afdracht9,  'btwBedrag')];
-    $r5b = $som($vordering, 'btwBedrag');
-    $verschuldigd = centen($r1a['btw'] + $r1b['btw']);
+    $r4b = ['grondslag' => $som($verlegd,    'btwGrondslag'), 'btw' => $som($verlegd,    'btwBedrag')];
+    $r5b = $som($voorbelasting, 'btwBedrag');
+    $verschuldigd = centen($r1a['btw'] + $r1b['btw'] + $r4b['btw']);
 
     return [
         'kwartaal'    => $kwartaal,
@@ -240,6 +242,7 @@ function bh_btw(int $kwartaal, int $jaar): array {
         'rubriek1b'   => $r1b,
         'rubriek1c'   => ['grondslag' => 0, 'btw' => 0],
         'rubriek1d'   => ['grondslag' => 0, 'btw' => 0],
+        'rubriek4b'   => $r4b,
         'rubriek5b'   => $r5b,
         'verschuldigd'=> $verschuldigd,
         'saldo'       => centen($verschuldigd - $r5b),

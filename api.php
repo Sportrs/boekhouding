@@ -138,8 +138,9 @@ switch ($actie) {
         if (!($excl > 0)) json_response(['fout' => 'Bedrag excl. BTW moet groter dan 0 zijn'], 422);
         $regime = (string) ($in['btwPercentage'] ?? '');
         $geenBtw = ($regime === 'geen');           // buitenland: geen NL BTW, niet in aangifte
-        $pct = $geenBtw ? 0 : (int) $regime;
-        if (!$geenBtw && !in_array($pct, [21, 9, 0], true)) json_response(['fout' => 'BTW moet 21, 9, 0 of "geen" zijn'], 422);
+        $verlegd = ($regime === 'verlegd');        // BTW verlegd (EU): rubriek 4b + voorbelasting 5b, saldeert naar 0
+        $pct = $verlegd ? 21 : ($geenBtw ? 0 : (int) $regime);
+        if (!$geenBtw && !$verlegd && !in_array($pct, [21, 9, 0], true)) json_response(['fout' => 'BTW moet 21, 9, 0, geen of verlegd zijn'], 422);
         $grootboek = (string) ($in['grootboekrekening'] ?? '');
         $betaal    = (string) ($in['betaalRekening'] ?? '');
         if ($grootboek === '' || $betaal === '') json_response(['fout' => 'Grootboek- en betaalrekening zijn verplicht'], 422);
@@ -149,20 +150,28 @@ switch ($actie) {
         if ((int) $check->fetchColumn() !== 2) json_response(['fout' => 'Onbekende grootboek- of betaalrekening'], 422);
 
         $btwBedrag = $geenBtw ? 0.0 : centen($excl * $pct / 100);
-        $totaal    = centen($excl + $btwBedrag);
+        // Bij verlegde BTW betaalt de bank alleen het excl-bedrag (BTW saldeert intern).
+        $totaal    = centen($excl + ($verlegd ? 0.0 : $btwBedrag));
         $btwCode   = $geenBtw ? null : (string) $pct;
 
         $regels = [];
+        $richting = null;
         if ($type === 'inkoop') {
             $regels[] = [$grootboek, $excl, 0];
-            if ($btwBedrag > 0) $regels[] = ['1810', $btwBedrag, 0];
+            if ($verlegd) {
+                $regels[] = ['1810', $btwBedrag, 0];   // voorbelasting (rubriek 5b)
+                $regels[] = ['1910', 0, $btwBedrag];   // verschuldigde verlegde BTW (rubriek 4b)
+                $richting = 'verlegd';
+            } else {
+                if ($btwBedrag > 0) $regels[] = ['1810', $btwBedrag, 0];
+                $richting = $geenBtw ? null : 'vordering';
+            }
             $regels[] = [$betaal, 0, $totaal];
-            $richting = $geenBtw ? null : 'vordering';
         } else {
             $regels[] = [$betaal, $totaal, 0];
             $regels[] = [$grootboek, 0, $excl];
-            if ($btwBedrag > 0) $regels[] = ['1910', 0, $btwBedrag];
-            $richting = $geenBtw ? null : 'afdracht';
+            if ($geenBtw || $verlegd) { $btwBedrag = 0.0; $btwCode = null; $richting = null; }
+            else { if ($btwBedrag > 0) $regels[] = ['1910', 0, $btwBedrag]; $richting = 'afdracht'; }
         }
 
         db()->beginTransaction();
@@ -187,6 +196,43 @@ switch ($actie) {
         $id = (int) ($in['id'] ?? 0);
         db()->prepare("DELETE FROM transacties WHERE id = :id")->execute([':id' => $id]);
         json_response(['ok' => true]);
+    }
+
+    // Memoriaalboeking: vrije journaalpost (DR/CR), moet in balans, zonder BTW.
+    case 'memoriaal': {
+        $datum = (string) ($in['datum'] ?? '');
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $datum)) json_response(['fout' => 'Geldige datum is verplicht'], 422);
+        $omschrijving = trim((string) ($in['omschrijving'] ?? ''));
+        if ($omschrijving === '') json_response(['fout' => 'Omschrijving is verplicht'], 422);
+        $regels = is_array($in['regels'] ?? null) ? $in['regels'] : [];
+        $norm = [];
+        foreach ($regels as $r) {
+            $rek = trim((string) ($r['rekening'] ?? ''));
+            if ($rek === '') continue;
+            $deb = centen((float) (is_string($r['debet'] ?? 0) ? str_replace(',', '.', $r['debet']) : ($r['debet'] ?? 0)));
+            $cred = centen((float) (is_string($r['credit'] ?? 0) ? str_replace(',', '.', $r['credit']) : ($r['credit'] ?? 0)));
+            if ($deb == 0.0 && $cred == 0.0) continue;
+            $norm[] = [$rek, $deb, $cred];
+        }
+        if (count($norm) < 2) json_response(['fout' => 'Minimaal 2 regels met een bedrag'], 422);
+        $totDeb = centen(array_sum(array_column($norm, 1)));
+        $totCred = centen(array_sum(array_column($norm, 2)));
+        if (abs($totDeb - $totCred) > 0.005) {
+            json_response(['fout' => 'Debet en credit zijn niet in balans (' . number_format($totDeb, 2) . ' vs ' . number_format($totCred, 2) . ')'], 422);
+        }
+        $nrs = array_values(array_unique(array_column($norm, 0)));
+        $ph = implode(',', array_fill(0, count($nrs), '?'));
+        $chk = db()->prepare("SELECT COUNT(DISTINCT nummer) FROM rekeningen WHERE nummer IN ($ph)");
+        $chk->execute($nrs);
+        if ((int) $chk->fetchColumn() !== count($nrs)) json_response(['fout' => 'Onbekende rekening in de regels'], 422);
+
+        db()->beginTransaction();
+        db()->prepare("INSERT INTO transacties (datum, omschrijving) VALUES (:d, :o)")->execute([':d' => $datum, ':o' => $omschrijving]);
+        $tid = (int) db()->lastInsertId();
+        $rq = db()->prepare("INSERT INTO transactie_regels (transactie_id, rekening, debet, credit) VALUES (:t,:rek,:deb,:cred)");
+        foreach ($norm as [$rek, $deb, $cred]) $rq->execute([':t' => $tid, ':rek' => $rek, ':deb' => $deb, ':cred' => $cred]);
+        db()->commit();
+        json_response(['ok' => true, 'id' => $tid], 201);
     }
 
     // ---------------- AI-factuurlezer ----------------

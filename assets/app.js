@@ -252,12 +252,14 @@
     }
     async function rerender() {
       const filter = `<div class="page-actions">
+        <button class="btn btn-ghost" id="memo">+ Memoriaal</button>
         <input type="date" id="from" value="${st.from}" style="width:auto" />
         <span class="mut">t/m</span>
         <input type="date" id="to" value="${st.to}" style="width:auto" />
         ${st.from || st.to ? '<button class="linkbtn" id="wis">wissen</button>' : ''}
       </div>`;
       view.innerHTML = pageHead('Journaal', 'Alle boekingen, nieuwste eerst.', filter) + (await load());
+      document.getElementById('memo').addEventListener('click', () => openMemoriaal(rerender));
       document.getElementById('from').addEventListener('change', (e) => { st.from = e.target.value; rerender(); });
       document.getElementById('to').addEventListener('change', (e) => { st.to = e.target.value; rerender(); });
       const wis = document.getElementById('wis');
@@ -307,6 +309,7 @@
       const incl = Number(line.bedrag);
       const initial = { datum: line.datum, omschrijving: line.leverancier_naam || line.tegenrekening_naam || line.omschrijving || '', grootboekrekening: line.standaard_rekening || '' };
       if (regime === 'geen') { initial.btwRegime = 'geen'; initial.bedragExBTW = round2(incl); }
+      else if (regime === 'verlegd') { initial.btwPercentage = 'verlegd'; initial.bedragExBTW = round2(incl); }
       else { const p = Number(regime) || 0; initial.btwPercentage = String(regime); initial.bedragExBTW = p > 0 ? round2(incl / (1 + p / 100)) : round2(incl); }
       const type = line.afbij === 'af' ? 'inkoop' : 'verkoop';
       openBoeking(initial, type, { betaal: bankRekening(), onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Betaling afgeletterd ✓'); laad(); } });
@@ -404,7 +407,7 @@
         <label class="field"><span>Zoekterm (herkenning in bankregel)</span><input id="zoek" value="${esc(lev ? (lev.zoekterm || '') : '')}" placeholder="bijv. ANTHROPIC of A2WEBHOST" /></label>
         <div class="row">
           <label class="field"><span>Land</span><input id="land" value="${esc(lev ? (lev.land || '') : '')}" placeholder="NL / US / IE" /></label>
-          <label class="field"><span>BTW-regime</span><select id="regime">${[['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)']].map(([v, l]) => `<option value="${v}" ${st.btw_regime === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field"><span>BTW-regime</span><select id="regime">${[['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)'], ['verlegd', 'BTW verlegd (EU)']].map(([v, l]) => `<option value="${v}" ${st.btw_regime === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         </div>
         <label class="field"><span>Standaard kostenrekening</span><select id="rek"><option value="">— geen —</option>${kosten.map((a) => `<option value="${esc(a.nummer)}" ${st.standaard_rekening === a.nummer ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('')}</select></label>
       </div>
@@ -439,6 +442,7 @@
             ${rij('1b — Omzet laag (9%)', d.rubriek1b.grondslag, d.rubriek1b.btw)}
             ${rij('1c — Overige tarieven', d.rubriek1c.grondslag, d.rubriek1c.btw)}
             ${rij('1d — Privégebruik', d.rubriek1d.grondslag, d.rubriek1d.btw)}
+            ${d.rubriek4b ? rij('4b — Verworven diensten uit EU (verlegd)', d.rubriek4b.grondslag, d.rubriek4b.btw) : ''}
             <tr style="background:rgba(38,52,73,.4)"><td style="font-weight:500;color:var(--inkdim)">Verschuldigde BTW</td><td></td><td class="num" style="font-weight:500;color:var(--ink)">${euro(d.verschuldigd)}</td></tr>
             ${rij('5b — Voorbelasting', null, d.rubriek5b)}
           </tbody></table>
@@ -809,7 +813,7 @@
     ov.className = 'overlay';
     document.body.appendChild(ov);
     function close() { ov.remove(); }
-    const pctNum = () => (st.pct === 'geen' ? 0 : Number(st.pct) || 0);
+    const pctNum = () => (st.pct === 'geen' ? 0 : st.pct === 'verlegd' ? 21 : Number(st.pct) || 0);
 
     function opties(list, sel) {
       if (!list.length) return '<option value="">— geen rekeningen —</option>';
@@ -817,24 +821,26 @@
     }
     function preview() {
       const excl = round2(Number(String(st.bedrag).replace(',', '.')) || 0);
-      const btw = round2((excl * pctNum()) / 100);
-      const totaal = round2(excl + btw);
+      const verlegd = st.pct === 'verlegd';
+      const btw = st.pct === 'geen' ? 0 : round2((excl * pctNum()) / 100);
+      const totaal = round2(excl + (verlegd ? 0 : btw));
       const rgls = [];
       if (st.type === 'inkoop') {
         rgls.push([st.grootboek, excl, 0]);
-        if (btw > 0) rgls.push(['1810', btw, 0]);
+        if (verlegd) { rgls.push(['1810', btw, 0]); rgls.push(['1910', 0, btw]); }
+        else if (btw > 0) rgls.push(['1810', btw, 0]);
         rgls.push([st.betaal, 0, totaal]);
       } else {
         rgls.push([st.betaal, totaal, 0]);
         rgls.push([st.grootboek, 0, excl]);
-        if (btw > 0) rgls.push(['1910', 0, btw]);
+        if (!verlegd && st.pct !== 'geen' && btw > 0) rgls.push(['1910', 0, btw]);
       }
       return rgls.map((r) => `<tr><td style="padding:4px 16px">${esc(r[0])} — ${esc(naam(r[0]))}</td><td class="num" style="padding:4px 16px;color:var(--ink)">${r[1] ? euro(r[1]) : ''}</td><td class="num" style="padding:4px 16px;color:var(--ink)">${r[2] ? euro(r[2]) : ''}</td></tr>`).join('');
     }
     function render() {
       const gbList = st.type === 'inkoop' ? kosten : omzet;
       if (!gbList.find((a) => a.nummer === st.grootboek)) st.grootboek = (gbList[0] || {}).nummer || '';
-      const pctOpts = [['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)']].map(([v, l]) => `<option value="${v}" ${String(st.pct) === v ? 'selected' : ''}>${l}</option>`).join('');
+      const pctOpts = [['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)'], ['verlegd', 'BTW verlegd (EU)']].map(([v, l]) => `<option value="${v}" ${String(st.pct) === v ? 'selected' : ''}>${l}</option>`).join('');
       ov.innerHTML = `<div class="modal"><div class="modal-head"><h2>Boeking invoeren</h2><button class="x">✕</button></div>
         <div class="modal-body">
           <div style="display:flex;gap:8px;align-items:stretch">
@@ -940,6 +946,58 @@
         await api('rekening_opslaan', { nieuw: !bewerken, nummer: st.nummer, naam: st.naam, type: st.type, openingSaldo: balans ? Number(String(st.opening).replace(',', '.')) || 0 : 0 }, 'POST');
         toast('Rekening opgeslagen ✓'); close(); renderRoute();
       } catch (e) { toast(e.message, 'error'); }
+    }
+    render();
+  }
+
+  // ---------------- Modal: Memoriaalboeking (vrije DR/CR) ----------------
+  async function openMemoriaal(refresh) {
+    try { if (!state.accounts.length) await loadAccounts(); } catch { /* */ }
+    const alle = state.accounts.slice().sort((a, b) => String(a.nummer).localeCompare(String(b.nummer)));
+    const st = { datum: vandaag(), omschrijving: '', regels: [{ rekening: '', debet: '', credit: '' }, { rekening: '', debet: '', credit: '' }] };
+    const num = (v) => Number(String(v).replace(',', '.')) || 0;
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    const opts = (sel) => '<option value="">— rekening —</option>' + alle.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === sel ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('');
+    function render() {
+      const totDeb = round2(st.regels.reduce((s, r) => s + num(r.debet), 0));
+      const totCred = round2(st.regels.reduce((s, r) => s + num(r.credit), 0));
+      const inBalans = Math.abs(totDeb - totCred) < 0.005;
+      const rows = st.regels.map((r, i) => `<tr>
+        <td style="padding:4px"><select data-i="${i}" data-f="rekening" style="min-width:190px">${opts(r.rekening)}</select></td>
+        <td style="padding:4px"><input class="num" data-i="${i}" data-f="debet" value="${esc(r.debet)}" placeholder="0,00" style="width:96px" /></td>
+        <td style="padding:4px"><input class="num" data-i="${i}" data-f="credit" value="${esc(r.credit)}" placeholder="0,00" style="width:96px" /></td>
+        <td style="padding:4px" class="r"><button class="linkbtn del" data-del="${i}">✕</button></td></tr>`).join('');
+      ov.innerHTML = `<div class="modal"><div class="modal-head"><h2>Memoriaalboeking</h2><button class="x">✕</button></div>
+        <div class="modal-body">
+          <div class="row">
+            <label class="field"><span>Datum</span><input type="date" id="datum" value="${esc(st.datum)}" /></label>
+            <label class="field"><span>Omschrijving</span><input id="oms" value="${esc(st.omschrijving)}" placeholder="bijv. Afschrijving inventaris" /></label>
+          </div>
+          <table><thead><tr><th style="padding:4px">Rekening</th><th class="r" style="padding:4px">Debet</th><th class="r" style="padding:4px">Credit</th><th></th></tr></thead>
+          <tbody>${rows}</tbody></table>
+          <button class="linkbtn" id="add" style="margin-top:4px">+ regel</button>
+          <div style="display:flex;gap:24px;margin-top:8px;font-size:14px">
+            <span>Debet: <b class="num">${euro(totDeb)}</b></span>
+            <span>Credit: <b class="num">${euro(totCred)}</b></span>
+            <span class="${inBalans ? 'suc' : 'dan'}">${inBalans ? '✓ in balans' : '✗ verschil ' + euro(totDeb - totCred)}</span>
+          </div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-success" id="boek">Boeken ✓</button></div></div>`;
+      ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
+      ov.querySelector('#datum').onchange = (e) => st.datum = e.target.value;
+      ov.querySelector('#oms').oninput = (e) => st.omschrijving = e.target.value;
+      ov.querySelectorAll('[data-f]').forEach((el) => { el.onchange = () => { st.regels[Number(el.dataset.i)][el.dataset.f] = el.value; render(); }; });
+      ov.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => { st.regels.splice(Number(b.dataset.del), 1); while (st.regels.length < 2) st.regels.push({ rekening: '', debet: '', credit: '' }); render(); });
+      ov.querySelector('#add').onclick = () => { st.regels.push({ rekening: '', debet: '', credit: '' }); render(); };
+      ov.querySelector('#boek').onclick = boek;
+    }
+    async function boek() {
+      if (!st.omschrijving.trim()) return toast('Vul een omschrijving in', 'error');
+      const regels = st.regels.filter((r) => r.rekening && (num(r.debet) || num(r.credit))).map((r) => ({ rekening: r.rekening, debet: num(r.debet), credit: num(r.credit) }));
+      if (regels.length < 2) return toast('Minimaal 2 regels met een bedrag', 'error');
+      try { await api('memoriaal', { datum: st.datum, omschrijving: st.omschrijving, regels }, 'POST'); toast('Memoriaal geboekt ✓'); close(); if (refresh) refresh(); }
+      catch (e) { toast(e.message, 'error'); }
     }
     render();
   }

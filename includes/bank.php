@@ -15,7 +15,7 @@ function leverancier_opslaan(array $in): array {
     $naam = trim((string) ($in['naam'] ?? ''));
     if ($naam === '') json_response(['fout' => 'Naam is verplicht'], 422);
     $regime = (string) ($in['btw_regime'] ?? '21');
-    if (!in_array($regime, ['21', '9', '0', 'geen'], true)) $regime = '21';
+    if (!in_array($regime, ['21', '9', '0', 'geen', 'verlegd'], true)) $regime = '21';
     $data = [
         ':naam' => $naam,
         ':zoek' => trim((string) ($in['zoekterm'] ?? '')) ?: null,
