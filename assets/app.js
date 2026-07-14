@@ -105,6 +105,7 @@
     { hash: '#/facturen', label: 'Facturen invoeren', ic: '＋', page: pageFacturen },
     { hash: '#/journaal', label: 'Journaal', ic: '≣', page: pageJournaal },
     { hash: '#/grootboek', label: 'Grootboek', ic: '☰', page: pageGrootboek },
+    { hash: '#/bank', label: 'Bank', ic: '⇄', page: pageBank },
     { hash: '#/btw', label: 'BTW-aangifte', ic: '％', page: pageBTW },
     { hash: '#/jaarverslag', label: 'Jaarverslag', ic: '▦', page: pageJaarverslag },
     { hash: '#/import', label: 'Import', ic: '⇪', page: pageImport },
@@ -292,6 +293,128 @@
     view.innerHTML = pageHead('Grootboek', 'Klik een rekening om de opbouw te zien (grootboekkaart).') +
       (html || `<div class="card p5 mut">Nog geen rekeningen.</div>`);
     view.querySelectorAll('[data-kaart]').forEach((el) => el.addEventListener('click', () => openKaart(el.dataset.kaart)));
+  }
+
+  // ---------------- Pagina: Bank (MT940 + afletteren) ----------------
+  async function pageBank(view) {
+    let filter = 'open';
+    function bankRekening() {
+      const b = state.accounts.filter((a) => a.type === 'actief' && !a.systeem);
+      return (b.find((a) => /bunq|bank/i.test(a.naam)) || b[0] || {}).nummer || '';
+    }
+    function boekVanBank(line) {
+      const regime = line.btw_regime || '21';
+      const incl = Number(line.bedrag);
+      const initial = { datum: line.datum, omschrijving: line.leverancier_naam || line.tegenrekening_naam || line.omschrijving || '', grootboekrekening: line.standaard_rekening || '' };
+      if (regime === 'geen') { initial.btwRegime = 'geen'; initial.bedragExBTW = round2(incl); }
+      else { const p = Number(regime) || 0; initial.btwPercentage = String(regime); initial.bedragExBTW = p > 0 ? round2(incl / (1 + p / 100)) : round2(incl); }
+      const type = line.afbij === 'af' ? 'inkoop' : 'verkoop';
+      openBoeking(initial, type, { betaal: bankRekening(), onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Betaling afgeletterd ✓'); laad(); } });
+    }
+    async function laad() {
+      let lijst, leveranciers;
+      try {
+        await loadAccounts();
+        [lijst, leveranciers] = await Promise.all([api('bank_lijst', filter === 'alle' ? {} : { status: filter }), api('leveranciers')]);
+      } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+
+      const tabs = ['open', 'gekoppeld', 'genegeerd', 'alle'];
+      const rows = lijst.length ? lijst.map((r) => {
+        const badge = r.status === 'gekoppeld' ? '<span class="badge" style="color:var(--success)">gekoppeld</span>' : r.status === 'genegeerd' ? '<span class="badge">genegeerd</span>' : '';
+        const acties = r.status === 'open'
+          ? `<button class="btn btn-success" data-boek="${r.id}" style="padding:4px 10px">Boek</button> <button class="linkbtn" data-koppel="${r.id}">koppel</button> <button class="linkbtn" data-negeer="${r.id}">negeer</button>`
+          : r.status === 'gekoppeld'
+            ? `<button class="linkbtn" data-ontkoppel="${r.id}">ontkoppel</button>`
+            : `<button class="linkbtn" data-open="${r.id}">heropenen</button>`;
+        return `<tr>
+          <td class="num" style="text-align:left">${datumNL(r.datum)}</td>
+          <td class="${r.afbij === 'af' ? 'dan' : 'suc'}">${r.afbij}</td>
+          <td class="num" style="color:var(--ink)">${euro(r.bedrag)}</td>
+          <td class="naam" title="${esc(r.tegenrekening_naam || '')}">${esc(r.tegenrekening_naam || '—')}${r.leverancier_naam ? ` <span class="mut">→ ${esc(r.leverancier_naam)}</span>` : ''}</td>
+          <td class="naam" title="${esc(r.omschrijving || '')}" style="max-width:240px">${esc(r.omschrijving || '')}</td>
+          <td>${badge}</td>
+          <td class="r" style="white-space:nowrap">${acties}</td></tr>`;
+      }).join('') : `<tr><td colspan="7" class="empty">Geen bankregels — importeer een MT940 (.sta) bestand.</td></tr>`;
+
+      const levRows = leveranciers.length ? leveranciers.map((l) => `<tr>
+        <td>${esc(l.naam)}</td><td class="mut">${esc(l.zoekterm || '')}</td><td class="mut">${esc(l.land || '')}</td>
+        <td>${l.btw_regime === 'geen' ? '<span class="badge">geen BTW</span>' : l.btw_regime + '%'}</td>
+        <td class="num" style="text-align:left">${esc(l.standaard_rekening || '')}</td>
+        <td class="r"><button class="linkbtn" data-lev-edit="${l.id}">bewerken</button> <button class="linkbtn del" data-lev-del="${l.id}">verwijderen</button></td></tr>`).join('')
+        : `<tr><td colspan="6" class="empty">Nog geen leveranciers.</td></tr>`;
+
+      view.innerHTML =
+        pageHead('Bank', 'Importeer je MT940-afschrift en letter betalingen af tegen boekingen.',
+          `<button class="btn btn-brand" id="mt940">MT940 importeren</button><input type="file" id="mt940file" accept=".sta,.txt,text/plain" style="display:none" />`) +
+        `<div class="tabs" style="margin-bottom:16px;display:flex;gap:8px">${tabs.map((t) => `<button data-tab="${t}" class="${filter === t ? 'active' : ''}">${t}</button>`).join('')}</div>
+         <div class="card" style="margin-bottom:24px"><table>
+           <thead><tr><th>Datum</th><th>Af/bij</th><th class="r">Bedrag</th><th>Tegenrekening</th><th>Omschrijving</th><th>Status</th><th></th></tr></thead>
+           <tbody>${rows}</tbody></table></div>
+         <div class="card"><div class="card-head"><span>Leveranciers</span><button class="btn btn-brand" id="nieuweLev">+ Leverancier</button></div>
+           <table><thead><tr><th>Naam</th><th>Zoekterm</th><th>Land</th><th>BTW</th><th>Kostenrek.</th><th></th></tr></thead>
+           <tbody>${levRows}</tbody></table></div>`;
+
+      const fileEl = document.getElementById('mt940file');
+      document.getElementById('mt940').onclick = () => fileEl.click();
+      fileEl.onchange = async () => {
+        const file = fileEl.files[0]; if (!file) return;
+        try { const tekst = await file.text(); const r = await api('bank_import', { bestand: tekst }, 'POST'); toast(`${r.geimporteerd} geïmporteerd, ${r.overgeslagen} overgeslagen`); laad(); }
+        catch (e) { toast(e.message, 'error'); } finally { fileEl.value = ''; }
+      };
+      view.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => { filter = b.dataset.tab; laad(); });
+      view.querySelectorAll('[data-boek]').forEach((b) => b.onclick = () => boekVanBank(lijst.find((x) => x.id === Number(b.dataset.boek))));
+      view.querySelectorAll('[data-koppel]').forEach((b) => b.onclick = () => openKoppel(lijst.find((x) => x.id === Number(b.dataset.koppel)), laad));
+      view.querySelectorAll('[data-negeer]').forEach((b) => b.onclick = async () => { await api('bank_status', { id: Number(b.dataset.negeer), status: 'genegeerd' }, 'POST'); laad(); });
+      view.querySelectorAll('[data-open]').forEach((b) => b.onclick = async () => { await api('bank_status', { id: Number(b.dataset.open), status: 'open' }, 'POST'); laad(); });
+      view.querySelectorAll('[data-ontkoppel]').forEach((b) => b.onclick = async () => { await api('bank_ontkoppel', { id: Number(b.dataset.ontkoppel) }, 'POST'); laad(); });
+      document.getElementById('nieuweLev').onclick = () => openLeverancier(null, laad);
+      view.querySelectorAll('[data-lev-edit]').forEach((b) => b.onclick = () => openLeverancier(leveranciers.find((l) => l.id === Number(b.dataset.levEdit)), laad));
+      view.querySelectorAll('[data-lev-del]').forEach((b) => b.onclick = async () => { if (!confirm('Leverancier verwijderen?')) return; await api('leverancier_verwijder', { id: Number(b.dataset.levDel) }, 'POST'); laad(); });
+    }
+    laad();
+  }
+
+  // Koppel-modal: bestaande boeking met hetzelfde bedrag
+  async function openKoppel(line, refresh) {
+    if (!line) return;
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>Koppel aan boeking</h2><button class="x">✕</button></div><div class="modal-body" id="kk"><div class="mut">Zoeken…</div></div></div>`;
+    ov.querySelector('.x').onclick = close;
+    let sug;
+    try { sug = await api('bank_suggesties', { id: line.id }); } catch (e) { ov.querySelector('#kk').innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    ov.querySelector('#kk').innerHTML =
+      `<div class="mut" style="font-size:13px">${datumNL(line.datum)} · ${esc(line.tegenrekening_naam || '')} · <b>${euro(line.bedrag)}</b></div>` +
+      (sug.length
+        ? `<table style="margin-top:8px"><tbody>${sug.map((s) => `<tr><td class="num" style="text-align:left">${datumNL(s.datum)}</td><td>${esc(s.omschrijving)}</td><td class="num">${euro(s.totaal)}</td><td class="r"><button class="btn btn-success" data-k="${s.id}" style="padding:4px 10px">koppel</button></td></tr>`).join('')}</tbody></table>`
+        : `<div class="mut" style="margin-top:10px">Geen boeking met hetzelfde bedrag gevonden. Sluit dit venster en gebruik <b>Boek</b> om een nieuwe boeking te maken (eventueel met factuur-PDF).</div>`);
+    ov.querySelectorAll('[data-k]').forEach((b) => b.onclick = async () => { try { await api('bank_koppel', { id: line.id, transactieId: Number(b.dataset.k) }, 'POST'); toast('Gekoppeld ✓'); close(); refresh(); } catch (e) { toast(e.message, 'error'); } });
+  }
+
+  // Leverancier-modal
+  function openLeverancier(lev, refresh) {
+    const st = { id: lev ? lev.id : 0, btw_regime: lev ? lev.btw_regime : '21', standaard_rekening: lev ? (lev.standaard_rekening || '') : '' };
+    const kosten = state.accounts.filter((a) => a.type === 'kosten');
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>${lev ? 'Leverancier bewerken' : 'Nieuwe leverancier'}</h2><button class="x">✕</button></div>
+      <div class="modal-body">
+        <label class="field"><span>Naam</span><input id="naam" value="${esc(lev ? lev.naam : '')}" /></label>
+        <label class="field"><span>Zoekterm (herkenning in bankregel)</span><input id="zoek" value="${esc(lev ? (lev.zoekterm || '') : '')}" placeholder="bijv. ANTHROPIC of A2WEBHOST" /></label>
+        <div class="row">
+          <label class="field"><span>Land</span><input id="land" value="${esc(lev ? (lev.land || '') : '')}" placeholder="NL / US / IE" /></label>
+          <label class="field"><span>BTW-regime</span><select id="regime">${[['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)']].map(([v, l]) => `<option value="${v}" ${st.btw_regime === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        </div>
+        <label class="field"><span>Standaard kostenrekening</span><select id="rek"><option value="">— geen —</option>${kosten.map((a) => `<option value="${esc(a.nummer)}" ${st.standaard_rekening === a.nummer ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('')}</select></label>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Opslaan</button></div></div>`;
+    ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
+    ov.querySelector('#opslaan').onclick = async () => {
+      const body = { id: st.id, naam: ov.querySelector('#naam').value, zoekterm: ov.querySelector('#zoek').value, land: ov.querySelector('#land').value, btw_regime: ov.querySelector('#regime').value, standaard_rekening: ov.querySelector('#rek').value };
+      if (!body.naam.trim()) return toast('Naam is verplicht', 'error');
+      try { await api('leverancier_opslaan', body, 'POST'); toast('Leverancier opgeslagen ✓'); close(); refresh(); } catch (e) { toast(e.message, 'error'); }
+    };
   }
 
   // ---------------- Pagina: BTW ----------------
@@ -663,7 +786,8 @@
   }
 
   // ---------------- Modal: Boeking ----------------
-  function openBoeking(initial, initialType) {
+  function openBoeking(initial, initialType, opts) {
+    opts = opts || {};
     const accounts = state.accounts;
     const kosten = accounts.filter((a) => a.type === 'kosten');
     const omzet = accounts.filter((a) => a.type === 'opbrengsten');
@@ -672,19 +796,20 @@
 
     const st = {
       type: initialType || 'inkoop',
-      datum: (initial && initial.factuurDatum) || vandaag(),
+      datum: (initial && (initial.factuurDatum || initial.datum)) || vandaag(),
       factuurNummer: (initial && initial.factuurNummer) || '',
       omschrijving: (initial && (initial.omschrijving || initial.leverancier)) || '',
       bedrag: initial && initial.bedragExBTW != null ? String(initial.bedragExBTW) : '',
-      pct: initial && initial.btwPercentage != null ? Number(initial.btwPercentage) : 21,
-      grootboek: (initial ? kosten[0] : kosten[0]) ? kosten[0].nummer : '',
-      betaal: (banken.find((a) => /bank/i.test(a.naam)) || banken[0] || {}).nummer || '',
+      pct: (initial && initial.btwRegime === 'geen') ? 'geen' : (initial && initial.btwPercentage != null ? String(initial.btwPercentage) : '21'),
+      grootboek: (initial && initial.grootboekrekening) || (kosten[0] ? kosten[0].nummer : ''),
+      betaal: (opts.betaal) || (banken.find((a) => /bank|bunq/i.test(a.naam)) || banken[0] || {}).nummer || '',
     };
 
     const ov = document.createElement('div');
     ov.className = 'overlay';
     document.body.appendChild(ov);
     function close() { ov.remove(); }
+    const pctNum = () => (st.pct === 'geen' ? 0 : Number(st.pct) || 0);
 
     function opties(list, sel) {
       if (!list.length) return '<option value="">— geen rekeningen —</option>';
@@ -692,7 +817,7 @@
     }
     function preview() {
       const excl = round2(Number(String(st.bedrag).replace(',', '.')) || 0);
-      const btw = round2((excl * st.pct) / 100);
+      const btw = round2((excl * pctNum()) / 100);
       const totaal = round2(excl + btw);
       const rgls = [];
       if (st.type === 'inkoop') {
@@ -709,9 +834,14 @@
     function render() {
       const gbList = st.type === 'inkoop' ? kosten : omzet;
       if (!gbList.find((a) => a.nummer === st.grootboek)) st.grootboek = (gbList[0] || {}).nummer || '';
+      const pctOpts = [['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)']].map(([v, l]) => `<option value="${v}" ${String(st.pct) === v ? 'selected' : ''}>${l}</option>`).join('');
       ov.innerHTML = `<div class="modal"><div class="modal-head"><h2>Boeking invoeren</h2><button class="x">✕</button></div>
         <div class="modal-body">
-          <div class="toggle">${['inkoop', 'verkoop'].map((t) => `<button data-type="${t}" class="${st.type === t ? 'active' : ''}">${t}factuur</button>`).join('')}</div>
+          <div style="display:flex;gap:8px;align-items:stretch">
+            <div class="toggle" style="flex:1">${['inkoop', 'verkoop'].map((t) => `<button data-type="${t}" class="${st.type === t ? 'active' : ''}">${t}factuur</button>`).join('')}</div>
+            <button class="btn btn-ghost" id="pdf" title="Lees een PDF-factuur uit">📄 Factuur</button>
+          </div>
+          <input type="file" id="pdffile" accept="application/pdf" style="display:none" />
           <div class="row">
             <label class="field"><span>Datum</span><input type="date" id="datum" value="${esc(st.datum)}" /></label>
             <label class="field"><span>Factuurnummer</span><input id="fn" value="${esc(st.factuurNummer)}" /></label>
@@ -719,7 +849,7 @@
           <label class="field"><span>Omschrijving</span><input id="oms" value="${esc(st.omschrijving)}" /></label>
           <div class="row">
             <label class="field"><span>Bedrag excl. BTW</span><input class="num" id="bedrag" value="${esc(st.bedrag)}" placeholder="0,00" /></label>
-            <label class="field"><span>BTW-percentage</span><select id="pct"><option value="21" ${st.pct === 21 ? 'selected' : ''}>21%</option><option value="9" ${st.pct === 9 ? 'selected' : ''}>9%</option><option value="0" ${st.pct === 0 ? 'selected' : ''}>0%</option></select></label>
+            <label class="field"><span>BTW</span><select id="pct">${pctOpts}</select></label>
           </div>
           <div class="row">
             <label class="field"><span>${st.type === 'inkoop' ? 'Kostenrekening' : 'Omzetrekening'}</span><select id="gb">${opties(gbList, st.grootboek)}</select></label>
@@ -734,9 +864,26 @@
       ov.querySelector('.x').onclick = close;
       ov.querySelector('#annuleer').onclick = close;
       ov.querySelectorAll('[data-type]').forEach((b) => b.onclick = () => { st.type = b.dataset.type; render(); });
-      const bind = (id, key, num) => { const el = ov.querySelector('#' + id); el.oninput = () => { st[key] = num ? Number(el.value) : el.value; if (key === 'bedrag' || key === 'pct' || key === 'grootboek' || key === 'betaal') ov.querySelector('#prev').innerHTML = preview(); }; el.onchange = el.oninput; };
+      const bind = (id, key) => { const el = ov.querySelector('#' + id); el.oninput = () => { st[key] = el.value; if (['bedrag', 'pct', 'grootboek', 'betaal'].includes(key)) ov.querySelector('#prev').innerHTML = preview(); }; el.onchange = el.oninput; };
       bind('datum', 'datum'); bind('fn', 'factuurNummer'); bind('oms', 'omschrijving');
-      bind('bedrag', 'bedrag'); bind('pct', 'pct', true); bind('gb', 'grootboek'); bind('bet', 'betaal');
+      bind('bedrag', 'bedrag'); bind('pct', 'pct'); bind('gb', 'grootboek'); bind('bet', 'betaal');
+
+      const pf = ov.querySelector('#pdffile');
+      ov.querySelector('#pdf').onclick = () => pf.click();
+      pf.onchange = async () => {
+        const file = pf.files[0]; if (!file) return;
+        const btn = ov.querySelector('#pdf'); btn.textContent = 'Uitlezen…'; btn.disabled = true;
+        try {
+          const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(file); });
+          const d = await api('factuur_lezen', { pdf: b64 }, 'POST');
+          if (d.omschrijving || d.leverancier) st.omschrijving = d.omschrijving || d.leverancier;
+          if (d.factuurNummer) st.factuurNummer = d.factuurNummer;
+          if (d.factuurDatum) st.datum = d.factuurDatum;
+          if (d.bedragExBTW) st.bedrag = String(d.bedragExBTW);
+          if (d.btwPercentage != null && st.pct !== 'geen') st.pct = String(d.btwPercentage);
+          toast('Factuur uitgelezen ✓'); render();
+        } catch (e) { toast(e.message, 'error'); btn.textContent = '📄 Factuur'; btn.disabled = false; }
+      };
       ov.querySelector('#boek').onclick = boek;
     }
     async function boek() {
@@ -745,8 +892,9 @@
       if (!st.omschrijving.trim()) return toast('Vul een omschrijving in', 'error');
       if (!st.grootboek || !st.betaal) return toast('Kies de rekeningen', 'error');
       try {
-        await api('boeking', { datum: st.datum, omschrijving: st.omschrijving, factuurNummer: st.factuurNummer, type: st.type, bedragExBTW: excl, btwPercentage: st.pct, grootboekrekening: st.grootboek, betaalRekening: st.betaal }, 'POST');
-        toast('Boeking opgeslagen ✓'); close(); renderRoute();
+        const r = await api('boeking', { datum: st.datum, omschrijving: st.omschrijving, factuurNummer: st.factuurNummer, type: st.type, bedragExBTW: excl, btwPercentage: st.pct, grootboekrekening: st.grootboek, betaalRekening: st.betaal }, 'POST');
+        toast('Boeking opgeslagen ✓'); close();
+        if (opts.onSaved) await opts.onSaved(r.id); else renderRoute();
       } catch (e) { toast(e.message, 'error'); }
     }
     render();

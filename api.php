@@ -13,6 +13,7 @@ require __DIR__ . '/includes/auth.php';
 require __DIR__ . '/includes/boekhouding.php';
 require __DIR__ . '/includes/ai.php';
 require __DIR__ . '/includes/import.php';
+require __DIR__ . '/includes/bank.php';
 
 set_exception_handler(function (Throwable $e): void {
     error_log('Boekhouding fout: ' . $e->getMessage());
@@ -135,8 +136,10 @@ switch ($actie) {
         if ($type !== 'inkoop' && $type !== 'verkoop') json_response(['fout' => 'Type moet inkoop of verkoop zijn'], 422);
         $excl = centen((float) ($in['bedragExBTW'] ?? 0));
         if (!($excl > 0)) json_response(['fout' => 'Bedrag excl. BTW moet groter dan 0 zijn'], 422);
-        $pct = (int) ($in['btwPercentage'] ?? 0);
-        if (!in_array($pct, [21, 9, 0], true)) json_response(['fout' => 'BTW-percentage moet 21, 9 of 0 zijn'], 422);
+        $regime = (string) ($in['btwPercentage'] ?? '');
+        $geenBtw = ($regime === 'geen');           // buitenland: geen NL BTW, niet in aangifte
+        $pct = $geenBtw ? 0 : (int) $regime;
+        if (!$geenBtw && !in_array($pct, [21, 9, 0], true)) json_response(['fout' => 'BTW moet 21, 9, 0 of "geen" zijn'], 422);
         $grootboek = (string) ($in['grootboekrekening'] ?? '');
         $betaal    = (string) ($in['betaalRekening'] ?? '');
         if ($grootboek === '' || $betaal === '') json_response(['fout' => 'Grootboek- en betaalrekening zijn verplicht'], 422);
@@ -145,21 +148,21 @@ switch ($actie) {
         $check->execute([':a' => $grootboek, ':b' => $betaal]);
         if ((int) $check->fetchColumn() !== 2) json_response(['fout' => 'Onbekende grootboek- of betaalrekening'], 422);
 
-        $btwBedrag = centen($excl * $pct / 100);
+        $btwBedrag = $geenBtw ? 0.0 : centen($excl * $pct / 100);
         $totaal    = centen($excl + $btwBedrag);
-        $btwCode   = (string) $pct;
+        $btwCode   = $geenBtw ? null : (string) $pct;
 
         $regels = [];
         if ($type === 'inkoop') {
             $regels[] = [$grootboek, $excl, 0];
             if ($btwBedrag > 0) $regels[] = ['1810', $btwBedrag, 0];
             $regels[] = [$betaal, 0, $totaal];
-            $richting = 'vordering';
+            $richting = $geenBtw ? null : 'vordering';
         } else {
             $regels[] = [$betaal, $totaal, 0];
             $regels[] = [$grootboek, 0, $excl];
             if ($btwBedrag > 0) $regels[] = ['1910', 0, $btwBedrag];
-            $richting = 'afdracht';
+            $richting = $geenBtw ? null : 'afdracht';
         }
 
         db()->beginTransaction();
@@ -219,6 +222,50 @@ switch ($actie) {
 
     case 'grootboek':
         json_response(bh_grootboek());
+
+    // ---------------- Bank (MT940) + afletteren ----------------
+    case 'bank_import': {
+        $inhoud = (string) ($in['bestand'] ?? '');
+        if (strlen($inhoud) < 20) json_response(['fout' => 'Geen bestand ontvangen'], 422);
+        try {
+            json_response(bank_importeer($inhoud));
+        } catch (Throwable $e) {
+            json_response(['fout' => $e->getMessage()], 422);
+        }
+    }
+
+    case 'bank_lijst':
+        json_response(bank_lijst(($in['status'] ?? '') !== '' ? (string) $in['status'] : null));
+
+    case 'bank_suggesties':
+        json_response(bank_suggesties((int) ($in['id'] ?? 0)));
+
+    case 'bank_koppel':
+        bank_koppel((int) ($in['id'] ?? 0), (int) ($in['transactieId'] ?? 0));
+        json_response(['ok' => true]);
+
+    case 'bank_ontkoppel':
+        bank_ontkoppel((int) ($in['id'] ?? 0));
+        json_response(['ok' => true]);
+
+    case 'bank_status':
+        bank_status((int) ($in['id'] ?? 0), (string) ($in['status'] ?? 'open'));
+        json_response(['ok' => true]);
+
+    case 'bank_leverancier':
+        bank_leverancier_zet((int) ($in['id'] ?? 0), (int) ($in['leverancierId'] ?? 0) ?: null);
+        json_response(['ok' => true]);
+
+    // ---------------- Leveranciers ----------------
+    case 'leveranciers':
+        json_response(leveranciers_lijst());
+
+    case 'leverancier_opslaan':
+        json_response(leverancier_opslaan($in));
+
+    case 'leverancier_verwijder':
+        leverancier_verwijder((int) ($in['id'] ?? 0));
+        json_response(['ok' => true]);
 
     case 'grootboekkaart': {
         $nr = trim((string) ($in['nummer'] ?? ''));

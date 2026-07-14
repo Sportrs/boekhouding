@@ -99,6 +99,43 @@ CREATE TABLE IF NOT EXISTS toelichtingen (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------
+-- Leveranciers + bankimport (MT940) + afletteren
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS leveranciers (
+  id                 INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  naam               VARCHAR(160)  NOT NULL,
+  zoekterm           VARCHAR(160)  NULL,
+  land               VARCHAR(60)   NULL,
+  btw_regime         VARCHAR(20)   NOT NULL DEFAULT '21',
+  standaard_rekening VARCHAR(20)   NULL,
+  iban               VARCHAR(40)   NULL,
+  aangemaakt_op      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_lev_naam (naam)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS banktransacties (
+  id                 INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  datum              DATE          NOT NULL,
+  bedrag             DECIMAL(12,2) NOT NULL,
+  afbij              VARCHAR(3)    NOT NULL,
+  tegenrekening_iban VARCHAR(40)   NULL,
+  tegenrekening_naam VARCHAR(160)  NULL,
+  omschrijving       VARCHAR(500)  NULL,
+  code               VARCHAR(6)    NULL,
+  ruw                TEXT          NULL,
+  hash               CHAR(40)      NOT NULL,
+  status             VARCHAR(20)   NOT NULL DEFAULT 'open',
+  transactie_id      INT UNSIGNED  NULL,
+  leverancier_id     INT UNSIGNED  NULL,
+  aangemaakt_op      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_bank_hash (hash),
+  KEY idx_bank_status (status),
+  KEY idx_bank_datum (datum)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
 -- Systeemrekeningen (BTW) — worden ook door de app geborgd
 -- ---------------------------------------------------------------------
 INSERT IGNORE INTO rekeningen (nummer, naam, type, systeem, opening_saldo) VALUES

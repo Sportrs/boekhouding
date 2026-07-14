@@ -88,6 +88,7 @@ opnieuw draaien kan geen kwaad.
 
 - `migraties/001_jaarcijfers.sql` — tabel `jaarcijfers` (voor de jaarrekening-import).
 - `migraties/002_toelichtingen.sql` — tabel `toelichtingen` (verloopschema's + deelnemingen).
+- `migraties/003_bank_leveranciers.sql` — tabellen `leveranciers` + `banktransacties` (MT940-import & afletteren).
 
 ---
 
