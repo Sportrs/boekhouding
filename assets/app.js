@@ -314,6 +314,17 @@
       const type = line.afbij === 'af' ? 'inkoop' : 'verkoop';
       openBoeking(initial, type, { betaal: bankRekening(), onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Betaling afgeletterd ✓'); laad(); } });
     }
+    // Overboeking / memoriaal: bankregel boeken tegen een vrije tegenrekening
+    // (bv. rekening-courant privé, BTW-betaling, overboeking tussen banken).
+    function memoVanBank(line) {
+      const bank = bankRekening();
+      const bedrag = round2(Number(line.bedrag));
+      const oms = line.leverancier_naam || line.tegenrekening_naam || line.omschrijving || 'Overboeking';
+      const regels = line.afbij === 'af'
+        ? [{ rekening: '', debet: bedrag, credit: 0 }, { rekening: bank, debet: 0, credit: bedrag }]
+        : [{ rekening: bank, debet: bedrag, credit: 0 }, { rekening: '', debet: 0, credit: bedrag }];
+      openMemoriaal(laad, { initial: { datum: line.datum, omschrijving: oms, regels }, onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Afgeletterd ✓'); laad(); } });
+    }
     async function laad() {
       let lijst, leveranciers;
       try {
@@ -325,7 +336,7 @@
       const rows = lijst.length ? lijst.map((r) => {
         const badge = r.status === 'gekoppeld' ? '<span class="badge" style="color:var(--success)">gekoppeld</span>' : r.status === 'genegeerd' ? '<span class="badge">genegeerd</span>' : '';
         const acties = r.status === 'open'
-          ? `<button class="btn btn-success" data-boek="${r.id}" style="padding:4px 10px">Boek</button> <button class="linkbtn" data-koppel="${r.id}">koppel</button> <button class="linkbtn" data-negeer="${r.id}">negeer</button>`
+          ? `<button class="btn btn-success" data-boek="${r.id}" style="padding:4px 10px">Boek</button> <button class="linkbtn" data-memo="${r.id}">overboeking</button> <button class="linkbtn" data-koppel="${r.id}">koppel</button> <button class="linkbtn" data-negeer="${r.id}">negeer</button>`
           : r.status === 'gekoppeld'
             ? `<button class="linkbtn" data-ontkoppel="${r.id}">ontkoppel</button>`
             : `<button class="linkbtn" data-open="${r.id}">heropenen</button>`;
@@ -367,6 +378,7 @@
       view.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => { filter = b.dataset.tab; laad(); });
       view.querySelectorAll('[data-boek]').forEach((b) => b.onclick = () => boekVanBank(lijst.find((x) => x.id === Number(b.dataset.boek))));
       view.querySelectorAll('[data-koppel]').forEach((b) => b.onclick = () => openKoppel(lijst.find((x) => x.id === Number(b.dataset.koppel)), laad));
+      view.querySelectorAll('[data-memo]').forEach((b) => b.onclick = () => memoVanBank(lijst.find((x) => x.id === Number(b.dataset.memo))));
       view.querySelectorAll('[data-negeer]').forEach((b) => b.onclick = async () => { await api('bank_status', { id: Number(b.dataset.negeer), status: 'genegeerd' }, 'POST'); laad(); });
       view.querySelectorAll('[data-open]').forEach((b) => b.onclick = async () => { await api('bank_status', { id: Number(b.dataset.open), status: 'open' }, 'POST'); laad(); });
       view.querySelectorAll('[data-ontkoppel]').forEach((b) => b.onclick = async () => { await api('bank_ontkoppel', { id: Number(b.dataset.ontkoppel) }, 'POST'); laad(); });
@@ -954,20 +966,25 @@
   }
 
   // ---------------- Modal: Memoriaalboeking (vrije DR/CR) ----------------
-  async function openMemoriaal(refresh) {
+  async function openMemoriaal(refresh, opts) {
     try { if (!state.accounts.length) await loadAccounts(); } catch { /* */ }
     const alle = state.accounts.slice().sort((a, b) => String(a.nummer).localeCompare(String(b.nummer)));
-    const st = { datum: vandaag(), omschrijving: '', regels: [{ rekening: '', debet: '', credit: '' }, { rekening: '', debet: '', credit: '' }] };
+    const init = (opts && opts.initial) || {};
+    const st = {
+      datum: init.datum || vandaag(),
+      omschrijving: init.omschrijving || '',
+      regels: (init.regels && init.regels.length ? init.regels : [{ rekening: '', debet: '', credit: '' }, { rekening: '', debet: '', credit: '' }]).map((r) => ({ rekening: r.rekening || '', debet: r.debet || '', credit: r.credit || '' })),
+    };
     const num = (v) => Number(String(v).replace(',', '.')) || 0;
     const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
     const close = () => ov.remove();
-    const opts = (sel) => '<option value="">— rekening —</option>' + alle.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === sel ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('');
+    const optie = (sel) => '<option value="">— rekening —</option>' + alle.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === sel ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('');
     function render() {
       const totDeb = round2(st.regels.reduce((s, r) => s + num(r.debet), 0));
       const totCred = round2(st.regels.reduce((s, r) => s + num(r.credit), 0));
       const inBalans = Math.abs(totDeb - totCred) < 0.005;
       const rows = st.regels.map((r, i) => `<tr>
-        <td style="padding:4px"><select data-i="${i}" data-f="rekening" style="min-width:190px">${opts(r.rekening)}</select></td>
+        <td style="padding:4px"><select data-i="${i}" data-f="rekening" style="min-width:190px">${optie(r.rekening)}</select></td>
         <td style="padding:4px"><input class="num" data-i="${i}" data-f="debet" value="${esc(r.debet)}" placeholder="0,00" style="width:96px" /></td>
         <td style="padding:4px"><input class="num" data-i="${i}" data-f="credit" value="${esc(r.credit)}" placeholder="0,00" style="width:96px" /></td>
         <td style="padding:4px" class="r"><button class="linkbtn del" data-del="${i}">✕</button></td></tr>`).join('');
@@ -999,8 +1016,11 @@
       if (!st.omschrijving.trim()) return toast('Vul een omschrijving in', 'error');
       const regels = st.regels.filter((r) => r.rekening && (num(r.debet) || num(r.credit))).map((r) => ({ rekening: r.rekening, debet: num(r.debet), credit: num(r.credit) }));
       if (regels.length < 2) return toast('Minimaal 2 regels met een bedrag', 'error');
-      try { await api('memoriaal', { datum: st.datum, omschrijving: st.omschrijving, regels }, 'POST'); toast('Memoriaal geboekt ✓'); close(); if (refresh) refresh(); }
-      catch (e) { toast(e.message, 'error'); }
+      try {
+        const r = await api('memoriaal', { datum: st.datum, omschrijving: st.omschrijving, regels }, 'POST');
+        toast('Memoriaal geboekt ✓'); close();
+        if (opts && opts.onSaved) await opts.onSaved(r.id); else if (refresh) refresh();
+      } catch (e) { toast(e.message, 'error'); }
     }
     render();
   }
