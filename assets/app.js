@@ -10,6 +10,8 @@
   const toastsEl = document.getElementById('toasts');
   const euroFmt = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 });
   const euro = (n) => euroFmt.format(Number(n) || 0);
+  const euro0Fmt = new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const euro0 = (n) => euro0Fmt.format(Math.round(Number(n) || 0)); // hele euro's, voor rapporten
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   function datumNL(iso) {
     if (!iso) return '';
@@ -322,7 +324,7 @@
       [balans, wenv, jaarcijfers] = await Promise.all([api('balans'), api('wenv'), api('jaarcijfers')]);
     } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
 
-    const lijst = (arr) => arr.map((p) => `<tr><td>${esc(p.nummer)} — ${esc(p.naam)}</td><td class="num" style="color:var(--ink)">${euro(p.saldo)}</td></tr>`).join('');
+    const lijst = (arr) => arr.map((p) => { const nm = `${esc(p.nummer)} — ${esc(p.naam)}`; return `<tr><td class="naam" title="${nm}">${nm}</td><td class="num" style="color:var(--ink)">${euro0(p.saldo)}</td></tr>`; }).join('');
 
     let vergelijkendHtml = '';
     if (jaarcijfers && jaarcijfers.length) {
@@ -334,8 +336,8 @@
         pivot.get(k).vals[Number(r.jaar)] = Number(r.bedrag);
       });
       const rowsFor = (soort, sectie) => [...pivot.values()].filter((p) => p.soort === soort && p.sectie === sectie)
-        .map((p) => `<tr><td>${esc(p.oms)}</td>${jaren.map((j) => `<td class="num">${euro(p.vals[j] || 0)}</td>`).join('')}</tr>`).join('');
-      const th = `<tr><th>Post</th>${jaren.map((j) => `<th class="r">${j}</th>`).join('')}</tr>`;
+        .map((p) => `<tr><td class="naam" title="${esc(p.oms)}">${esc(p.oms)}</td>${jaren.map((j) => `<td class="num jaar">${euro0(p.vals[j] || 0)}</td>`).join('')}</tr>`).join('');
+      const th = `<tr><th class="post">Post</th>${jaren.map((j) => `<th class="num jaar">${j}</th>`).join('')}</tr>`;
       const blok = (titel, soort, secties) => `<div><h4>${titel}</h4><table class="jl"><thead>${th}</thead><tbody>${secties.map((s) => rowsFor(soort, s)).join('')}</tbody></table></div>`;
       vergelijkendHtml = `<div class="card" style="margin-bottom:24px">
         <div class="card-head">Vergelijkende cijfers uit geïmporteerde jaarrekening(en)</div>
@@ -351,30 +353,30 @@
         <div class="card-head"><span>Balans per ${datumNL(balans.datum)}</span><span class="${balans.inBalans ? 'suc' : 'dan'}" style="font-size:12px">${balans.inBalans ? '✓ In balans' : '✗ Niet in balans'}</span></div>
         <div class="split">
           <div><h4>Activa</h4><table class="jl"><tbody>${lijst(balans.activa)}</tbody>
-            <tfoot><tr><td style="font-weight:500;color:var(--inkdim)">Totaal activa</td><td class="num">${euro(balans.totaalActiva)}</td></tr></tfoot></table></div>
+            <tfoot><tr><td class="naam" style="font-weight:500;color:var(--inkdim)">Totaal activa</td><td class="num">${euro0(balans.totaalActiva)}</td></tr></tfoot></table></div>
           <div><h4>Passiva</h4><table class="jl"><tbody>${lijst(balans.passiva)}
-            <tr><td>Resultaat boekjaar</td><td class="num ${balans.resultaatBoekjaar >= 0 ? 'suc' : 'dan'}">${euro(balans.resultaatBoekjaar)}</td></tr></tbody>
-            <tfoot><tr><td style="font-weight:500;color:var(--inkdim)">Totaal passiva</td><td class="num">${euro(balans.totaalPassiva)}</td></tr></tfoot></table></div>
+            <tr><td class="naam">Resultaat boekjaar</td><td class="num ${balans.resultaatBoekjaar >= 0 ? 'suc' : 'dan'}">${euro0(balans.resultaatBoekjaar)}</td></tr></tbody>
+            <tfoot><tr><td class="naam" style="font-weight:500;color:var(--inkdim)">Totaal passiva</td><td class="num">${euro0(balans.totaalPassiva)}</td></tr></tfoot></table></div>
         </div>
       </div>
       <div class="card" style="margin-bottom:24px">
         <div class="card-head">Winst- &amp; verliesrekening (${datumNL(wenv.from)} t/m ${datumNL(wenv.to)})</div>
         <div class="split">
           <div><h4>Opbrengsten</h4><table class="jl"><tbody>${lijst(wenv.opbrengsten)}</tbody>
-            <tfoot><tr><td style="font-weight:500;color:var(--inkdim)">Totaal opbrengsten</td><td class="num">${euro(wenv.totaalOpbrengsten)}</td></tr></tfoot></table></div>
+            <tfoot><tr><td class="naam" style="font-weight:500;color:var(--inkdim)">Totaal opbrengsten</td><td class="num">${euro0(wenv.totaalOpbrengsten)}</td></tr></tfoot></table></div>
           <div><h4>Kosten</h4><table class="jl"><tbody>${lijst(wenv.kosten)}</tbody>
-            <tfoot><tr><td style="font-weight:500;color:var(--inkdim)">Totaal kosten</td><td class="num">${euro(wenv.totaalKosten)}</td></tr></tfoot></table></div>
+            <tfoot><tr><td class="naam" style="font-weight:500;color:var(--inkdim)">Totaal kosten</td><td class="num">${euro0(wenv.totaalKosten)}</td></tr></tfoot></table></div>
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 20px;border-top:1px solid var(--line);background:rgba(38,52,73,.4)">
           <span style="font-weight:500;color:var(--inkdim)">Resultaat boekjaar</span>
-          <span class="num ${wenv.resultaat >= 0 ? 'suc' : 'dan'}" style="font-size:18px;font-weight:700">${euro(wenv.resultaat)}</span>
+          <span class="num ${wenv.resultaat >= 0 ? 'suc' : 'dan'}" style="font-size:18px;font-weight:700">${euro0(wenv.resultaat)}</span>
         </div>
       </div>
       ${vergelijkendHtml}
       <div class="card p5 mut" style="font-size:14px;line-height:1.6">
         Deze rapportage is een interne weergave van de financiële positie van ${esc(s.bedrijfsnaam || 'de vennootschap')} per ${datumNL(balans.datum)}
-        en het resultaat over boekjaar ${esc(s.boekjaar)}. Controle: totaal activa (${euro(balans.totaalActiva)}) is gelijk aan totaal passiva inclusief
-        resultaat (${euro(balans.totaalPassiva)}). Dit betreft geen officieel jaarverslag conform Boek 2 BW.
+        en het resultaat over boekjaar ${esc(s.boekjaar)}. Controle: totaal activa (${euro0(balans.totaalActiva)}) is gelijk aan totaal passiva inclusief
+        resultaat (${euro0(balans.totaalPassiva)}). Dit betreft geen officieel jaarverslag conform Boek 2 BW.
       </div>`;
     document.getElementById('print').addEventListener('click', () => window.print());
   }

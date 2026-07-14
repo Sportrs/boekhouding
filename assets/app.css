@@ -157,7 +157,12 @@ input:focus, select:focus { border-color: var(--brand); }
 @media (max-width: 800px) { .split { grid-template-columns: 1fr; } }
 .split > div { background: var(--surface); padding: 20px; }
 .split h4 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 500; }
-.jl td { padding: 4px 0; border: 0; }
+.jl { table-layout: fixed; width: 100%; }
+.jl th { padding: 4px 0; }
+.jl td { padding: 5px 0; border: 0; }
+.jl td.naam, .jl th.post { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 10px; }
+.jl td.num, .jl th.num { width: 96px; }
+.jl td.jaar, .jl th.jaar { width: 84px; }
 
 /* Print */
 @media print {
