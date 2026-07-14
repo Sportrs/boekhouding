@@ -526,6 +526,14 @@
       const inBalans = Math.abs(ta - tp) < 0.005;
       const to = sum(data.wenv, 'opbrengsten');
       const tk = sum(data.wenv, 'kosten');
+      const diff = round2(ta - tp);
+      let onbalansHint = '';
+      if (!inBalans) {
+        const half = Math.abs(diff) / 2;
+        const kand = data.balans.filter((p) => half > 0 && Math.abs(Number(p.bedragHuidig)) === half).map((p) => p.omschrijving).filter(Boolean);
+        onbalansHint = `<div class="dan" style="font-size:13px;margin-top:8px;max-width:680px;line-height:1.5">De balans sluit niet — verschil ${euro(diff)}.` +
+          (kand.length ? ` Dat is precies 2× ${euro(half)}: controleer of ${kand.map((n) => '“' + esc(n) + '”').join(' / ')} aan de juiste kant staat en pas zo nodig het <b>Type</b> (activa/passiva) aan.` : ' Waarschijnlijk staat een post aan de verkeerde kant of ontbreekt er een bedrag.') + `</div>`;
+      }
       view.innerHTML =
         pageHead('Jaarrekening importeren', `${esc(data.bedrijfsnaam || '')} — boekjaar ${data.boekjaar} (vergelijking ${data.vergelijkingsjaar})`,
           `<button class="btn btn-ghost" id="opnieuw">Ander bestand</button>`) +
@@ -553,9 +561,9 @@
         <div class="card p5" style="margin-bottom:16px">
           <label class="field" style="max-width:280px"><span>Compensabel verlies (memo)</span><input class="num" id="verlies" value="${data.compensabeleVerliezen || 0}" /></label>
         </div>
-        <div style="display:flex;gap:8px">
+        ${onbalansHint}
+        <div style="display:flex;gap:8px;margin-top:12px">
           <button class="btn btn-success" id="importeer">Importeren ✓</button>
-          <span class="mut" style="align-self:center;font-size:13px">${inBalans ? '' : 'Let op: balans sluit niet — je kunt toch importeren, maar controleer de posten.'}</span>
         </div>`;
 
       // Waarde-edits: model bijwerken + totalen live (zonder herteken).
@@ -585,6 +593,11 @@
     }
 
     async function importeer() {
+      const ta = sum(data.balans, 'actief');
+      const tp = sum(data.balans, 'passief');
+      if (Math.abs(ta - tp) >= 0.005) {
+        if (!confirm(`De balans sluit niet: activa ${euro(ta)} vs passiva ${euro(tp)} (verschil ${euro(ta - tp)}).\n\nControleer of een post aan de verkeerde kant staat. Toch importeren?`)) return;
+      }
       try {
         const r = await api('jaarrekening_importeren', data, 'POST');
         toast(`Geïmporteerd ✓ — ${r.rekeningen} rekeningen, beginbalans ${Number(r.boekjaar) + 1}`);
