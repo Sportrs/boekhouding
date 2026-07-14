@@ -20,3 +20,6 @@ deployment:
     - /bin/rsync -a index.html api.php .htaccess config_example.php $DOC/
     - /bin/rsync -a assets/ $DOC/assets/
     - /bin/rsync -a includes/ $DOC/includes/
+    # Neutrale placeholder op de web-root. -n = alleen aanmaken als er nog
+    # niets staat, zodat een echte homepage later niet wordt overschreven.
+    - /bin/cp -n home/index.html $DOCROOT/index.html

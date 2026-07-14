@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Even een moment</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex; align-items: center; justify-content: center;
+        min-height: 100vh; padding: 24px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        background: linear-gradient(135deg, #eef2f7 0%, #dfe7f0 100%);
+        color: #334155;
+      }
+      .kaart {
+        max-width: 520px; text-align: center;
+        background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px;
+        padding: 48px 40px; box-shadow: 0 10px 40px rgba(15, 23, 42, .08);
+      }
+      .emoji { font-size: 44px; line-height: 1; }
+      blockquote {
+        margin: 24px 0 8px; font-size: 22px; line-height: 1.45; font-weight: 500; color: #1e293b;
+      }
+      .bron { color: #94a3b8; font-size: 14px; }
+      .voet { margin-top: 32px; color: #cbd5e1; font-size: 12px; letter-spacing: .04em; }
+    </style>
+  </head>
+  <body>
+    <main class="kaart">
+      <div class="emoji" id="emoji">🌿</div>
+      <blockquote id="spreuk">…</blockquote>
+      <div class="bron" id="bron"></div>
+      <div class="voet">Een rustig plekje op het web</div>
+    </main>
+    <script>
+      var emojis = ['🌿', '☕', '🌤️', '📚', '🎈', '🍃', '✨', '🕊️', '🌻', '🧭'];
+      var spreuken = [
+        ['Wie goed doet, goed ontmoet.', 'spreekwoord'],
+        ['Rustig aan, dan breekt het lijntje niet.', 'spreekwoord'],
+        ['Elke dag is een nieuwe bladzijde.', 'onbekend'],
+        ['Kleine stapjes brengen je ook ver.', 'onbekend'],
+        ['De aanhouder wint.', 'spreekwoord'],
+        ['Geduld is een schone zaak.', 'spreekwoord'],
+        ['Doe wat je kunt, met wat je hebt, waar je bent.', 'onbekend'],
+        ['Na regen komt zonneschijn.', 'spreekwoord'],
+        ['Bezint eer ge begint.', 'spreekwoord'],
+        ['Een glimlach kost niets en geeft veel.', 'onbekend']
+      ];
+      var i = Math.floor(Math.random() * spreuken.length);
+      var e = Math.floor(Math.random() * emojis.length);
+      document.getElementById('emoji').textContent = emojis[e];
+      document.getElementById('spreuk').textContent = '“' + spreuken[i][0] + '”';
+      document.getElementById('bron').textContent = '— ' + spreuken[i][1];
+    </script>
+  </body>
+</html>
