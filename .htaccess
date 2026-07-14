@@ -1,0 +1,10 @@
+# BV Boekhouding — Apache/LiteSpeed
+DirectoryIndex index.html
+
+# Blokkeer directe toegang tot gevoelige bestanden.
+<FilesMatch "^(config.*\.php|.*\.sql|\.cpanel\.yml)$">
+  Require all denied
+</FilesMatch>
+
+# Blokkeer directe toegang tot de includes-map (die wordt alleen server-side ge-include).
+RedirectMatch 403 ^/includes/.*$

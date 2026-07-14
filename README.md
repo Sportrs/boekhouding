@@ -6,63 +6,53 @@ kwartaal een BTW-aangifte en toont jaarlijks een balans en winst- & verliesreken
 
 ## Stack
 
-- **Backend:** Node.js + Express + TypeScript (via `tsx`)
-- **Database:** SQLite via Prisma
-- **Frontend:** React + Vite + Tailwind CSS v4
-- **AI:** Anthropic Messages API (`claude-haiku-4-5-20251001`) voor PDF-uitlezen
-- **Auth:** single-user, ondertekende sessiecookie (wachtwoord via `ADMIN_PASSWORD`)
+Zelfde opzet als Tournada/Commentada — draait op standaard cPanel-hosting:
 
-## Aan de slag
+- **Backend:** PHP (PDO) — één `api.php` + `includes/`
+- **Database:** MySQL (utf8mb4, InnoDB)
+- **Frontend:** vanilla JS + HTML + CSS (`index.html`, `assets/`) — géén build
+- **AI:** Anthropic Messages API via cURL (`includes/ai.php`), model `claude-haiku-4-5-20251001`
+- **Auth:** single-user, PHP-sessie met wachtwoord uit `config.php`
+- **Deploy:** cPanel Git Version Control → `.cpanel.yml` kopieert naar `~/public_html`
 
-```bash
-# 1. Configuratie
-cp .env.example .env      # vul ADMIN_PASSWORD, SESSION_SECRET en (optioneel) ANTHROPIC_API_KEY in
+## Bestanden
 
-# 2. Dependencies + database
-npm install               # draait automatisch `prisma generate`
-npm run db:push           # maakt de SQLite-database en tabellen aan
-
-# 3. Ontwikkelen (server op :3000, Vite op :5173)
-npm run dev
+```
+boekhouding/
+├── index.html              # de app (frontend shell)
+├── api.php                 # JSON-API (dispatch op ?actie=)
+├── config_example.php      # template → kopieer naar config.php (server-only)
+├── includes/
+│   ├── auth.php            # sessie-login
+│   ├── ai.php              # PDF-factuur uitlezen via Anthropic (cURL)
+│   └── boekhouding.php     # saldi, balans, W&V, BTW
+├── assets/
+│   ├── app.js              # frontend-logica
+│   ├── app.css             # donker thema
+│   └── favicon.svg
+├── boekhouding_schema.sql  # MySQL-schema (importeer via phpMyAdmin)
+├── .htaccess
+└── .cpanel.yml             # deploy naar public_html
 ```
 
-Open daarna <http://localhost:5173> en log in met het wachtwoord uit `ADMIN_PASSWORD`.
+## Live zetten
 
-De Anthropic API-sleutel kan via `.env` (`ANTHROPIC_API_KEY`) of via **Instellingen** in de app.
+Zie **[DEPLOY.md](./DEPLOY.md)** voor de stap-voor-stap cPanel-handleiding. Kort:
 
-## Productie
+1. Maak in cPanel een **MySQL-database + gebruiker** en importeer `boekhouding_schema.sql` (phpMyAdmin).
+2. Kopieer `config_example.php` → **`config.php`** in `public_html` en vul DB-gegevens,
+   `ADMIN_WACHTWOORD` en `ANTHROPIC_API_KEY` in.
+3. **Git Version Control** → clone `github.com/Sportrs/boekhouding` → **Deploy HEAD Commit**.
+4. Open het (sub)domein en log in.
 
-```bash
-npm run build             # bouwt frontend (dist/client) én server-bundle (dist/server/index.cjs)
-NODE_ENV=production npm start   # draait app.cjs; Express serveert API + frontend op $PORT (of 3000)
-```
-
-Eén Node-proces serveert alles (API + statische frontend). `app.cjs` is het CommonJS-
-startpunt (voor Phusion Passenger op cPanel). Zet in productie `NODE_ENV=production` en
-een sterk `SESSION_SECRET`.
-
-## Deployen naar Hosting.com (cPanel) via Git
-
-Zie **[DEPLOY.md](./DEPLOY.md)** voor de volledige stap-voor-stap handleiding:
-GitHub → cPanel *Git Version Control* → *Setup Node.js App* (Passenger draait `app.cjs`),
-met een `.cpanel.yml` die bij elke deploy automatisch installeert, bouwt, het
-databaseschema bijwerkt en de app herstart.
+Updates: `git push` → in cPanel *Update from Remote* + *Deploy HEAD Commit*.
 
 ## Boekhoudlogica
 
-- Elke transactie bestaat uit journaalregels waarbij **totaal debet = totaal credit**.
-- **Inkoopfactuur:** DR kostenrekening (excl.) · DR 1810 BTW te vorderen · CR bank (incl.)
-- **Verkoopfactuur:** DR bank (incl.) · CR omzetrekening (excl.) · CR 1910 BTW te betalen
-- Saldi (natural balance):
-  - actief/kosten: `openingSaldo + Σdebet − Σcredit`
-  - passief/opbrengsten: `openingSaldo + Σcredit − Σdebet`
-- BTW-aangifte per kwartaal (rubrieken 1a/1b + voorbelasting 5b).
-- Balans en W&V per boekjaar; controle `Σ activa = Σ passiva + resultaat`.
+- Elke transactie: journaalregels waarbij **totaal debet = totaal credit**.
+- **Inkoop:** DR kostenrekening (excl.) · DR 1810 BTW te vorderen · CR bank (incl.)
+- **Verkoop:** DR bank (incl.) · CR omzetrekening (excl.) · CR 1910 BTW te betalen
+- Saldi (natural balance): actief/kosten `opening + Σdebet − Σcredit`; passief/opbrengsten `opening + Σcredit − Σdebet`.
+- BTW-aangifte per kwartaal (1a/1b + voorbelasting 5b); balans en W&V per boekjaar.
 
-De systeemrekeningen `1810 BTW te vorderen` en `1910 BTW te betalen` worden automatisch
-aangemaakt en zijn niet verwijderbaar.
-
-## Niet in scope
-
-Multi-user, crediteurenadministratie/openstaande posten, bankimport (CAMT.053/MT940),
-vennootschapsbelasting, officieel jaarverslag conform Boek 2 BW.
+Systeemrekeningen `1810`/`1910` worden automatisch geborgd en zijn niet verwijderbaar.

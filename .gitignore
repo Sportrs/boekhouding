@@ -1,8 +1,10 @@
-node_modules/
-dist/
-*.db
-*.db-journal
-.env
-prisma/*.db
-prisma/*.db-journal
+# Server-only geheimen (DB-wachtwoord, ADMIN_WACHTWOORD, API-sleutel)
+config.php
+
+# Overig
 .DS_Store
+*.log
+error_log
+
+# Node-restant / lokale env
+.env

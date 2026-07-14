@@ -1,129 +1,81 @@
 # Deployen naar Hosting.com (cPanel) via Git
 
-Deze app draait op cPanel als een **Node.js-applicatie** (Phusion Passenger). De
-frontend wordt gebouwd tot statische bestanden die Express zelf serveert, en de
-data staat in een SQLite-bestand op de server. Je zet updates live door naar
-GitHub te pushen en in cPanel te deployen.
+Zelfde flow als Sportrs / Tournada / Commentada: **PHP + MySQL**, gedeployed door
+`.cpanel.yml` dat de bestanden naar `~/public_html` kopieert. Geen Node, geen build,
+geen "Setup Node.js App".
 
-> **Overzicht:** GitHub (`Sportrs/boekhouding`) → cPanel *Git Version Control*
-> (clone + deploy) → cPanel *Setup Node.js App* (Passenger draait `app.cjs`).
-
----
-
-## Belangrijk vooraf
-
-- **Gebruik een (sub)domein-root**, geen submap. Kies als *Application URL* bijv.
-  `boekhouding.jouwdomein.nl` of de root van een domein. De app gebruikt absolute
-  paden (`/assets`, `/api`), dus een submap (`jouwdomein.nl/boekhouding`) werkt niet
-  zonder aanpassing.
-- **Node-versie 18 of hoger** (Node.js Selector in cPanel).
-- **HTTPS/AutoSSL** aanzetten voor het (sub)domein — de sessiecookie is `secure` in
-  productie.
+> **Deed je al "Setup Node.js App" voor dit project?** Verwijder die Node-applicatie
+> weer — die is voor deze PHP-versie niet nodig.
 
 ---
 
-## Stap 1 — Code staat op GitHub
+## Stap 1 — MySQL-database aanmaken
 
-De repo is `https://github.com/Sportrs/boekhouding`. Toekomstige wijzigingen:
+1. cPanel → **MySQL® Databases** (of **MySQL Database Wizard**).
+2. Maak een database (bijv. `xxx_boekhouding`), een gebruiker en een sterk wachtwoord.
+3. Koppel de gebruiker aan de database met **ALL PRIVILEGES**.
+4. Noteer databasenaam, gebruikersnaam en wachtwoord — die komen in `config.php`.
 
-```bash
-git add -A
-git commit -m "wijziging"
-git push
+## Stap 2 — Schema importeren
+
+1. cPanel → **phpMyAdmin** → kies je nieuwe database links.
+2. Tab **Import** → kies `boekhouding_schema.sql` uit deze repo → **Go**.
+3. Je hebt nu de tabellen `rekeningen`, `transacties`, `transactie_regels`,
+   `instellingen` + de twee BTW-systeemrekeningen.
+
+## Stap 3 — Repo klonen (Git Version Control)
+
+1. cPanel → **Git Version Control** → **Create** → *Clone a Repository*.
+2. **Clone URL**:
+   - Publiek: `https://github.com/Sportrs/boekhouding.git`
+   - Privé: gebruik een token (`https://<TOKEN>@github.com/Sportrs/boekhouding.git`) of
+     de cPanel-SSH-sleutel als deploy key.
+3. Kies een **Repository Path** (bijv. `repositories/boekhouding`). Dit is de plek waar
+   de code staat — **niet** de webroot; `.cpanel.yml` kopieert vandaaruit naar `public_html`.
+
+## Stap 4 — `config.php` op de server
+
+Maak in de **webroot** (`~/public_html`, of de docroot van je subdomein) het bestand
+`config.php`. Het snelst: kopieer `config_example.php` (die wordt meegedeployed) en vul in.
+
+cPanel → **File Manager** → in `public_html`:
+- kopieer `config_example.php` → `config.php` (of maak `config.php` met onderstaande inhoud), en zet erin:
+
+```php
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'xxx_boekhouding');
+define('DB_USER', 'xxx_boekh');
+define('DB_PASS', 'jouw-db-wachtwoord');
+define('ADMIN_WACHTWOORD', 'een-sterk-wachtwoord');
+define('ANTHROPIC_API_KEY', 'sk-ant-...');   // of leeg + later via Instellingen
+define('BOEKHOUDING_AI_MODEL', 'claude-haiku-4-5-20251001');
 ```
 
----
+> `config.php` staat in `.gitignore` en wordt door deploys **nooit** overschreven.
+> De rest van `config_example.php` (de `db()`/helper-functies) hoeft niet mee — die
+> zitten al in het gekopieerde `config_example.php`; maak `config.php` gewoon als een
+> volledige kopie en pas alleen de `define(...)`-regels bovenaan aan.
 
-## Stap 2 — Repo klonen in cPanel (Git Version Control)
+## Stap 5 — Deployen
 
-1. cPanel → **Git Version Control** → **Create**.
-2. Zet **Clone a Repository** aan.
-3. **Clone URL**:
-   - Publieke repo: `https://github.com/Sportrs/boekhouding.git`
-   - Privé repo: gebruik een GitHub *Personal Access Token* in de URL,
-     `https://<TOKEN>@github.com/Sportrs/boekhouding.git`, of voeg de SSH-sleutel van
-     cPanel (Terminal: `cat ~/.ssh/id_*.pub`) toe als *Deploy key* op GitHub en gebruik
-     `git@github.com:Sportrs/boekhouding.git`.
-4. **Repository Path**: `boekhouding` (wordt `/home/JOUWUSER/boekhouding`).
-5. **Create**. De code staat nu in die map.
+cPanel → **Git Version Control** → bij de repo op **Manage** → tab **Pull or Deploy**:
+- **Update from Remote** (haalt commits op)
+- **Deploy HEAD Commit** (voert `.cpanel.yml` uit → kopieert naar `public_html`)
 
----
+Open je (sub)domein → je ziet het inlogscherm. Log in met `ADMIN_WACHTWOORD`.
 
-## Stap 3 — Node.js App aanmaken
-
-1. cPanel → **Setup Node.js App** → **Create Application**.
-2. **Node.js version**: 20 (of 18+).
-3. **Application mode**: Production.
-4. **Application root**: `boekhouding` (exact dezelfde map als de repo-clone).
-5. **Application URL**: je (sub)domein.
-6. **Application startup file**: `app.cjs`
-7. **Create**. Noteer bovenaan het `source ...activate`-commando (dat heb je zo nodig).
-
-> De mapnaam `boekhouding` is belangrijk: het automatische deploy-script zoekt de
-> virtualenv onder `~/nodevenv/boekhouding/...`.
+> **Subdomein?** Als de app op een subdomein draait, is de docroot niet
+> `~/public_html` maar bijv. `~/boekhouding.jouwdomein.nl`. Pas dan de regel
+> `export DOC=$HOME/public_html` in `.cpanel.yml` aan (en zet `config.php` in díe map).
 
 ---
 
-## Stap 4 — `.env` aanmaken op de server
+## Updates live zetten
 
-Maak in de app-root (`/home/JOUWUSER/boekhouding`) een bestand **`.env`** aan
-(File Manager → +File, of Terminal). Zowel de app als de Prisma-CLI lezen dit:
+1. Lokaal: `git add -A && git commit -m "..." && git push`
+2. cPanel → Git Version Control → **Update from Remote** → **Deploy HEAD Commit**
 
-```
-DATABASE_URL="file:./boekhouding.db"
-ANTHROPIC_API_KEY="sk-ant-...jouw-sleutel..."
-ADMIN_PASSWORD="een-sterk-wachtwoord"
-SESSION_SECRET="een-lange-willekeurige-string"
-NODE_ENV="production"
-```
-
-`PORT` niet zetten — die levert Passenger zelf.
-De API-sleutel kun je ook later in de app onder **Instellingen** invullen.
-
----
-
-## Stap 5 — Eerste build en start
-
-Open cPanel → **Terminal** en voer uit (vervang de eerste regel door het
-`source ...activate`-commando uit stap 3):
-
-```bash
-source ~/nodevenv/boekhouding/*/bin/activate
-cd ~/boekhouding
-npm install
-npm run build
-npx prisma db push          # maakt de database + tabellen aan
-```
-
-Ga daarna terug naar **Setup Node.js App** en klik **Restart**.
-
-Open je (sub)domein → je ziet het inlogscherm. Log in met `ADMIN_PASSWORD`.
-
----
-
-## Stap 6 — Updates live zetten (de git-workflow)
-
-Vanaf nu is live zetten een paar klikken:
-
-1. Lokaal: `git push` naar GitHub.
-2. cPanel → **Git Version Control** → bij de repo op **Manage** → tab **Pull or Deploy**:
-   - **Update from Remote** (haalt de nieuwe commits op).
-   - **Deploy HEAD Commit** (voert `.cpanel.yml` uit).
-
-`.cpanel.yml` doet automatisch: virtualenv activeren → `npm install` → `npm run build`
-→ `prisma db push` → Passenger herstarten (`tmp/restart.txt`).
-
-> **Werkt de automatische deploy niet** (bijv. de virtualenv wordt niet gevonden op
-> jouw host)? Doe stap 5 dan handmatig in de Terminal en herstart de app. De git-pull
-> haalt de code binnen; alleen de build/herstart draai je dan zelf.
-
----
-
-## Gegevens & back-ups
-
-- De database is één bestand: `~/boekhouding/prisma/boekhouding.db`.
-- Het staat in `.gitignore`, dus een deploy overschrijft je data **niet**.
-- Back-up = dit bestand kopiëren (File Manager of `cp`). Bewaar het buiten de repo.
+Klaar — `config.php` en je data blijven staan.
 
 ---
 
@@ -131,8 +83,9 @@ Vanaf nu is live zetten een paar klikken:
 
 | Symptoom | Oplossing |
 |---|---|
-| 503 / "Application failed to start" | Bekijk het log in *Setup Node.js App*. Meestal ontbreekt de build (`npm run build`) of is `app.cjs` niet als startup file gezet. |
-| Inloggen lukt niet / cookie blijft niet | Zorg dat HTTPS aan staat en `NODE_ENV=production` in `.env`. |
-| PDF-upload faalt met 413 | Grote PDF's kunnen tegen Apache's `LimitRequestBody` aanlopen. Verlaag de PDF-grootte of vraag je host de limiet te verhogen. |
-| Facturen-uitlezen geeft foutmelding over API-sleutel | Vul `ANTHROPIC_API_KEY` in `.env` in (of via Instellingen) en herstart. |
-| Assets laden niet (404 op /assets/...) | De app staat waarschijnlijk in een submap. Gebruik een (sub)domein-root. |
+| Wit scherm / 500 | Klopt `config.php` (DB-gegevens)? Bekijk `error_log` in de webroot. |
+| "Serverfout" bij inloggen | DB-verbinding faalt of schema niet geïmporteerd (stap 2). |
+| Inloggen weigert | `ADMIN_WACHTWOORD` in `config.php` moet gezet zijn (niet `CHANGE_ME`). |
+| Factuur-uitlezen: "Geen API-sleutel" | Vul `ANTHROPIC_API_KEY` in `config.php` of via **Instellingen**. |
+| PDF-upload faalt (413) | Grote PDF botst met `LimitRequestBody`/`post_max_size`. Verklein de PDF of verhoog de PHP-limiet. |
+| Assets/API 404 | Draait de app in een submap i.p.v. (sub)domein-root? Gebruik een eigen docroot. |

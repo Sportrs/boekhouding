@@ -1,24 +1,21 @@
 ---
-# cPanel Git Version Control voert dit uit bij "Deploy HEAD Commit".
-# Vereist dat de Node.js App-map (Application root) gelijk is aan deze repo-map,
-# en dat er een .env-bestand in de repo-map staat (met o.a. DATABASE_URL).
+# ====================================================================
+# BV BOEKHOUDING — cPanel Git deployment
+# Wordt uitgevoerd bij "Deploy HEAD Commit" in cPanel > Git Version Control.
+# Kopieert de app naar de live web-map ($HOME/public_html).
 #
-# De taak activeert de Node-virtualenv van de app, installeert dependencies,
-# bouwt frontend + server, werkt het databaseschema bij en herstart Passenger
-# via tmp/restart.txt.
+# LET OP:
+#  - config.php staat in .gitignore en zit NIET in de repo. Deze deploy
+#    raakt config.php op de server daarom NOOIT aan (server-only geheimen).
+#  - boekhouding_schema.sql wordt bewust NIET naar de webroot gekopieerd
+#    (importeer die eenmalig via phpMyAdmin).
+#  - Draait de app op een subdomein? Pas dan DOC hieronder aan naar de
+#    document-root van dat subdomein (bijv. $HOME/boekhouding.jouwdomein.nl).
+# ====================================================================
 deployment:
   tasks:
-    - >-
-      /bin/bash -lc '
-      set -e;
-      source ~/nodevenv/boekhouding/*/bin/activate 2>/dev/null
-      || source $(ls -d ~/nodevenv/*/*/bin/activate 2>/dev/null | head -n1) 2>/dev/null
-      || true;
-      echo "Node: $(node -v 2>/dev/null), npm: $(npm -v 2>/dev/null)";
-      npm install --no-audit --no-fund;
-      npm run build;
-      npx prisma db push --skip-generate;
-      mkdir -p tmp;
-      touch tmp/restart.txt;
-      echo "Deploy klaar.";
-      '
+    - export DOC=$HOME/public_html
+    - /bin/mkdir -p $DOC/assets $DOC/includes
+    - /bin/rsync -a index.html api.php .htaccess config_example.php $DOC/
+    - /bin/rsync -a assets/ $DOC/assets/
+    - /bin/rsync -a includes/ $DOC/includes/
