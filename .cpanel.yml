@@ -2,19 +2,20 @@
 # ====================================================================
 # BV BOEKHOUDING — cPanel Git deployment
 # Wordt uitgevoerd bij "Deploy HEAD Commit" in cPanel > Git Version Control.
-# Kopieert de app naar de live web-map ($HOME/public_html).
+# Kopieert de app naar de submap /boekhouding in de web-root, zodat de app
+# op https://<domein>/boekhouding/ draait naast de bestaande site.
 #
 # LET OP:
 #  - config.php staat in .gitignore en zit NIET in de repo. Deze deploy
 #    raakt config.php op de server daarom NOOIT aan (server-only geheimen).
-#  - boekhouding_schema.sql wordt bewust NIET naar de webroot gekopieerd
-#    (importeer die eenmalig via phpMyAdmin).
-#  - Draait de app op een subdomein? Pas dan DOC hieronder aan naar de
-#    document-root van dat subdomein (bijv. $HOME/boekhouding.jouwdomein.nl).
+#  - Is de web-root van je domein NIET $HOME/public_html (bijv. bij een
+#    addon-domein of subdomein)? Pas dan DOCROOT hieronder aan naar de juiste
+#    document-root (zie cPanel > Domains > Document Root).
 # ====================================================================
 deployment:
   tasks:
-    - export DOC=$HOME/public_html
+    - export DOCROOT=$HOME/public_html
+    - export DOC=$DOCROOT/boekhouding
     - /bin/mkdir -p $DOC/assets $DOC/includes
     - /bin/rsync -a index.html api.php .htaccess config_example.php $DOC/
     - /bin/rsync -a assets/ $DOC/assets/

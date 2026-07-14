@@ -1,4 +1,4 @@
-# BV Boekhouding — Apache/LiteSpeed
+# BV Boekhouding — Apache/LiteSpeed (draait in submap /boekhouding)
 DirectoryIndex index.html
 
 # Blokkeer directe toegang tot gevoelige bestanden.
@@ -6,5 +6,6 @@ DirectoryIndex index.html
   Require all denied
 </FilesMatch>
 
-# Blokkeer directe toegang tot de includes-map (die wordt alleen server-side ge-include).
-RedirectMatch 403 ^/includes/.*$
+# Blokkeer directe toegang tot de includes-map (server-side ge-include),
+# ook onder een submap-pad.
+RedirectMatch 403 (^|/)includes/

@@ -35,10 +35,11 @@ geen "Setup Node.js App".
 
 ## Stap 4 — `config.php` op de server
 
-Maak in de **webroot** (`~/public_html`, of de docroot van je subdomein) het bestand
-`config.php`. Het snelst: kopieer `config_example.php` (die wordt meegedeployed) en vul in.
+De app draait in de submap **`/boekhouding`** van je web-root, dus `config.php` hoort in
+`~/public_html/boekhouding/`. Doe dit ná de eerste deploy (stap 5), want dan bestaat die
+map. Het snelst: kopieer het meegedeployde `config_example.php` → `config.php` en vul in.
 
-cPanel → **File Manager** → in `public_html`:
+cPanel → **File Manager** → in `public_html/boekhouding`:
 - kopieer `config_example.php` → `config.php` (of maak `config.php` met onderstaande inhoud), en zet erin:
 
 ```php
@@ -60,13 +61,14 @@ define('BOEKHOUDING_AI_MODEL', 'claude-haiku-4-5-20251001');
 
 cPanel → **Git Version Control** → bij de repo op **Manage** → tab **Pull or Deploy**:
 - **Update from Remote** (haalt commits op)
-- **Deploy HEAD Commit** (voert `.cpanel.yml` uit → kopieert naar `public_html`)
+- **Deploy HEAD Commit** (voert `.cpanel.yml` uit → kopieert naar `public_html/boekhouding/`)
 
-Open je (sub)domein → je ziet het inlogscherm. Log in met `ADMIN_WACHTWOORD`.
+Doe daarna stap 4 (`config.php` in `public_html/boekhouding/`) en open dan
+**`https://jouwdomein.nl/boekhouding/`** (mét afsluitende slash). Log in met `ADMIN_WACHTWOORD`.
 
-> **Subdomein?** Als de app op een subdomein draait, is de docroot niet
-> `~/public_html` maar bijv. `~/boekhouding.jouwdomein.nl`. Pas dan de regel
-> `export DOC=$HOME/public_html` in `.cpanel.yml` aan (en zet `config.php` in díe map).
+> **Andere web-root?** `.cpanel.yml` gaat uit van `$HOME/public_html`. Draait je domein
+> op een addon-domein of subdomein met een eigen document-root (zie cPanel → **Domains**),
+> pas dan `export DOCROOT=$HOME/public_html` in `.cpanel.yml` aan naar die map.
 
 ---
 
