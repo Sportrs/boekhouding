@@ -87,6 +87,7 @@ Reeds gedraaide migraties zijn idempotent (`CREATE TABLE IF NOT EXISTS`), dus
 opnieuw draaien kan geen kwaad.
 
 - `migraties/001_jaarcijfers.sql` — tabel `jaarcijfers` (voor de jaarrekening-import).
+- `migraties/002_toelichtingen.sql` — tabel `toelichtingen` (verloopschema's + deelnemingen).
 
 ---
 

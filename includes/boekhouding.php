@@ -284,3 +284,64 @@ function bh_dashboard(): array {
         'recenteBoekingen'  => array_slice($tx, 0, 6),
     ];
 }
+
+// ---------------------------------------------------------------------
+// Grootboekkaart / verloop per rekening (live boekjaar)
+//   beginsaldo + mutaties (journaalposten) -> eindsaldo
+// ---------------------------------------------------------------------
+function bh_grootboekkaart(string $nummer, ?string $from = null, ?string $to = null): array {
+    $r = db()->prepare("SELECT nummer, naam, type, opening_saldo FROM rekeningen WHERE nummer = :nr LIMIT 1");
+    $r->execute([':nr' => $nummer]);
+    $rek = $r->fetch();
+    if (!$rek) throw new RuntimeException('Rekening niet gevonden');
+
+    $boekjaar = bh_boekjaar();
+    $from = $from ?: ($boekjaar . '-01-01');
+    $to   = $to   ?: ($boekjaar . '-12-31');
+    $debetKant = ($rek['type'] === 'actief' || $rek['type'] === 'kosten');
+
+    // Alle regels op deze rekening, chronologisch.
+    $q = db()->prepare(
+        "SELECT t.datum, t.omschrijving, t.factuur_nummer, r.debet, r.credit
+         FROM transactie_regels r JOIN transacties t ON t.id = r.transactie_id
+         WHERE r.rekening = :nr
+         ORDER BY t.datum, t.id"
+    );
+    $q->execute([':nr' => $nummer]);
+
+    $opening = (float) $rek['opening_saldo'];
+    $priorDelta = 0.0;
+    $regels = [];
+    foreach ($q->fetchAll() as $row) {
+        $debet = (float) $row['debet'];
+        $credit = (float) $row['credit'];
+        $delta = $debetKant ? ($debet - $credit) : ($credit - $debet);
+        if ($row['datum'] < $from) {
+            $priorDelta += $delta;
+        } elseif ($row['datum'] <= $to) {
+            $regels[] = [
+                'datum'        => $row['datum'],
+                'omschrijving' => $row['omschrijving'],
+                'factuurNummer'=> $row['factuur_nummer'],
+                'debet'        => centen($debet),
+                'credit'       => centen($credit),
+                'delta'        => centen($delta),
+            ];
+        }
+    }
+
+    $begin = centen($opening + $priorDelta);
+    $loop = $begin;
+    foreach ($regels as &$rg) { $loop = centen($loop + $rg['delta']); $rg['saldo'] = $loop; }
+
+    return [
+        'nummer'    => $rek['nummer'],
+        'naam'      => $rek['naam'],
+        'type'      => $rek['type'],
+        'from'      => $from,
+        'to'        => $to,
+        'beginsaldo'=> $begin,
+        'regels'    => $regels,
+        'eindsaldo' => centen($loop),
+    ];
+}

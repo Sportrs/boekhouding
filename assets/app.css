@@ -163,6 +163,8 @@ input:focus, select:focus { border-color: var(--brand); }
 .jl td.naam, .jl th.post { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 10px; }
 .jl td.num, .jl th.num { width: 96px; }
 .jl td.jaar, .jl th.jaar { width: 84px; }
+.klik { cursor: pointer; }
+.klik:hover { color: var(--brand); }
 
 /* Print */
 @media print {

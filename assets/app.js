@@ -318,13 +318,43 @@
 
   // ---------------- Pagina: Jaarverslag ----------------
   async function pageJaarverslag(view) {
-    let s, balans, wenv, jaarcijfers;
+    let s, balans, wenv, jaarcijfers, toelichtingen;
     try {
       s = state.settings || (await api('instellingen'));
-      [balans, wenv, jaarcijfers] = await Promise.all([api('balans'), api('wenv'), api('jaarcijfers')]);
+      [balans, wenv, jaarcijfers, toelichtingen] = await Promise.all([api('balans'), api('wenv'), api('jaarcijfers'), api('toelichtingen')]);
     } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
 
-    const lijst = (arr) => arr.map((p) => { const nm = `${esc(p.nummer)} — ${esc(p.naam)}`; return `<tr><td class="naam" title="${nm}">${nm}</td><td class="num" style="color:var(--ink)">${euro0(p.saldo)}</td></tr>`; }).join('');
+    const lijst = (arr) => arr.map((p) => { const nm = `${esc(p.nummer)} — ${esc(p.naam)}`; return `<tr><td class="naam klik" data-kaart="${esc(p.nummer)}" title="${nm} — klik voor verloop">${nm}</td><td class="num" style="color:var(--ink)">${euro0(p.saldo)}</td></tr>`; }).join('');
+
+    // Toelichtingen: verloop per post + deelnemingen (uit de geïmporteerde jaarrekening).
+    let toelichtingHtml = '';
+    if (toelichtingen && toelichtingen.length) {
+      const groep = (rows) => { const m = new Map(); rows.forEach((r) => { if (!m.has(r.post)) m.set(r.post, []); m.get(r.post).push(r); }); return m; };
+      const verloopRij = (r) => { const st = /stand/i.test(r.label); const sty = st ? ' style="font-weight:500;color:var(--inkdim)"' : ''; const syn = st ? ' style="color:var(--ink)"' : ''; return `<tr><td class="naam"${sty}>${esc(r.label)}</td><td class="num"${syn}>${euro0(r.bedrag)}</td></tr>`; };
+      const verloop = toelichtingen.filter((r) => r.soort === 'verloop');
+      const deeln = toelichtingen.filter((r) => r.soort === 'deelneming');
+      const jaar = ((verloop[0] || deeln[0] || {}).jaar) || '';
+
+      if (verloop.length) {
+        toelichtingHtml += `<div class="card" style="margin-bottom:24px"><div class="card-head">Toelichting — verloop van posten ${jaar}</div><div class="split">` +
+          [...groep(verloop)].map(([post, rows]) => `<div><h4>${esc(post)}</h4><table class="jl"><tbody>${rows.map(verloopRij).join('')}</tbody></table></div>`).join('') +
+          `</div></div>`;
+      }
+      if (deeln.length) {
+        toelichtingHtml += `<div class="card" style="margin-bottom:24px"><div class="card-head">Deelnemingen</div><div class="card-body" style="display:grid;gap:18px">` +
+          [...groep(deeln)].map(([post, rows]) => {
+            const aandeel = (rows.find((r) => r.label === 'Aandeel') || {}).tekst || '';
+            const status = (rows.find((r) => r.label === 'Status') || {}).tekst || '';
+            const bedragRows = rows.filter((r) => r.bedrag !== null);
+            return `<div>
+              <div style="font-weight:500;color:var(--ink)">${esc(post)}${aandeel ? ` <span class="mut">(${esc(aandeel)})</span>` : ''}</div>
+              ${status ? `<div class="mut" style="font-size:13px;margin:2px 0 6px">${esc(status)}</div>` : ''}
+              ${bedragRows.length ? `<table class="jl" style="max-width:360px"><tbody>${bedragRows.map(verloopRij).join('')}</tbody></table>` : ''}
+            </div>`;
+          }).join('') +
+          `</div></div>`;
+      }
+    }
 
     let vergelijkendHtml = '';
     if (jaarcijfers && jaarcijfers.length) {
@@ -373,12 +403,14 @@
         </div>
       </div>
       ${vergelijkendHtml}
+      ${toelichtingHtml}
       <div class="card p5 mut" style="font-size:14px;line-height:1.6">
         Deze rapportage is een interne weergave van de financiële positie van ${esc(s.bedrijfsnaam || 'de vennootschap')} per ${datumNL(balans.datum)}
         en het resultaat over boekjaar ${esc(s.boekjaar)}. Controle: totaal activa (${euro0(balans.totaalActiva)}) is gelijk aan totaal passiva inclusief
         resultaat (${euro0(balans.totaalPassiva)}). Dit betreft geen officieel jaarverslag conform Boek 2 BW.
       </div>`;
     document.getElementById('print').addEventListener('click', () => window.print());
+    view.querySelectorAll('[data-kaart]').forEach((el) => el.addEventListener('click', () => openKaart(el.dataset.kaart)));
   }
 
   // ---------------- Pagina: Instellingen ----------------
@@ -388,8 +420,8 @@
     state.settings = s;
     const TYPE = { actief: 'Actief', passief: 'Passief', kosten: 'Kosten', opbrengsten: 'Opbrengsten' };
     const rekRows = state.accounts.map((a) => `<tr>
-        <td class="num" style="text-align:left">${esc(a.nummer)}</td>
-        <td>${esc(a.naam)}${a.systeem ? '<span class="badge">systeem</span>' : ''}</td>
+        <td class="num klik" style="text-align:left" data-kaart="${esc(a.nummer)}" title="Bekijk verloop / grootboekkaart">${esc(a.nummer)}</td>
+        <td class="klik" data-kaart="${esc(a.nummer)}">${esc(a.naam)}${a.systeem ? '<span class="badge">systeem</span>' : ''}</td>
         <td class="mut">${TYPE[a.type] || a.type}</td>
         <td class="num">${a.type === 'actief' || a.type === 'passief' ? euro(a.openingSaldo) : '—'}</td>
         <td class="r"><button class="linkbtn" data-edit="${esc(a.nummer)}">bewerken</button>${a.systeem ? '' : ` <button class="linkbtn del" data-del="${esc(a.nummer)}">verwijderen</button>`}</td>
@@ -436,6 +468,7 @@
       catch (e) { toast(e.message, 'error'); }
     });
     document.getElementById('nieuweRek').addEventListener('click', () => openRekening(null));
+    view.querySelectorAll('[data-kaart]').forEach((el) => el.addEventListener('click', () => openKaart(el.dataset.kaart)));
     view.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => openRekening(state.accounts.find((a) => a.nummer === b.dataset.edit))));
     view.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Rekening ${b.dataset.del} verwijderen?`)) return;
@@ -730,6 +763,44 @@
       } catch (e) { toast(e.message, 'error'); }
     }
     render();
+  }
+
+  // ---------------- Modal: Grootboekkaart (verloop) ----------------
+  async function openKaart(nummer) {
+    const ov = document.createElement('div');
+    ov.className = 'overlay';
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    ov.innerHTML = `<div class="modal"><div class="modal-head"><h2>Grootboekkaart</h2><button class="x">✕</button></div><div class="modal-body" id="kb"><div class="mut">Laden…</div></div></div>`;
+    ov.querySelector('.x').onclick = close;
+
+    let d;
+    try { d = await api('grootboekkaart', { nummer }); }
+    catch (e) { ov.querySelector('#kb').innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+
+    const rows = d.regels.length
+      ? d.regels.map((r) => `<tr>
+          <td class="num" style="text-align:left">${datumNL(r.datum)}</td>
+          <td>${esc(r.omschrijving)}</td>
+          <td class="num">${r.debet ? euro(r.debet) : ''}</td>
+          <td class="num">${r.credit ? euro(r.credit) : ''}</td>
+          <td class="num" style="color:var(--ink)">${euro(r.saldo)}</td></tr>`).join('')
+      : `<tr><td colspan="5" class="empty">Nog geen mutaties in ${String(d.from).slice(0, 4)}.</td></tr>`;
+
+    ov.querySelector('#kb').innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:14px">
+        <div><b>${esc(d.nummer)} — ${esc(d.naam)}</b> <span class="mut">(${esc(d.type)})</span></div>
+        <div class="mut">${datumNL(d.from)} t/m ${datumNL(d.to)}</div>
+      </div>
+      <table>
+        <thead><tr><th>Datum</th><th>Omschrijving</th><th class="r">Debet</th><th class="r">Credit</th><th class="r">Saldo</th></tr></thead>
+        <tbody>
+          <tr><td></td><td class="mut">Beginsaldo</td><td></td><td></td><td class="num" style="color:var(--ink)">${euro(d.beginsaldo)}</td></tr>
+          ${rows}
+        </tbody>
+        <tfoot><tr><td></td><td style="font-weight:600;color:var(--inkdim)">Eindsaldo</td><td></td><td></td><td class="num" style="font-weight:700;color:var(--ink)">${euro(d.eindsaldo)}</td></tr></tfoot>
+      </table>`;
   }
 
   // ---------------- Kleine HTML-helpers ----------------

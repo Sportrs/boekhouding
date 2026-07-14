@@ -214,6 +214,19 @@ switch ($actie) {
     case 'jaarcijfers':
         json_response(jaarcijfers_ophalen());
 
+    case 'toelichtingen':
+        json_response(toelichtingen_ophalen());
+
+    case 'grootboekkaart': {
+        $nr = trim((string) ($in['nummer'] ?? ''));
+        if ($nr === '') json_response(['fout' => 'nummer vereist'], 422);
+        try {
+            json_response(bh_grootboekkaart($nr));
+        } catch (Throwable $e) {
+            json_response(['fout' => $e->getMessage()], 404);
+        }
+    }
+
     // ---------------- Rapporten ----------------
     case 'dashboard':
         json_response(bh_dashboard());

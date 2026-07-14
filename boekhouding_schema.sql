@@ -82,6 +82,23 @@ CREATE TABLE IF NOT EXISTS jaarcijfers (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------
+-- Toelichtingen: verloopschema's per post + deelnemingen (met status)
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS toelichtingen (
+  id             INT UNSIGNED       NOT NULL AUTO_INCREMENT,
+  jaar           SMALLINT UNSIGNED  NOT NULL,
+  soort          VARCHAR(20)        NOT NULL,   -- verloop | deelneming
+  rekeningnummer VARCHAR(20)        NULL,
+  post           VARCHAR(200)       NOT NULL,
+  label          VARCHAR(160)       NOT NULL,
+  bedrag         DECIMAL(14,2)      NULL,
+  tekst          VARCHAR(255)       NULL,
+  volgorde       INT                NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  KEY idx_toel (soort, post, jaar)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
 -- Systeemrekeningen (BTW) — worden ook door de app geborgd
 -- ---------------------------------------------------------------------
 INSERT IGNORE INTO rekeningen (nummer, naam, type, systeem, opening_saldo) VALUES
