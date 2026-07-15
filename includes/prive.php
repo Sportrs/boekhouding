@@ -65,7 +65,7 @@ function prive_categorie_opslaan(array $in): array {
     $naam = trim((string) ($in['naam'] ?? ''));
     if ($naam === '') json_response(['fout' => 'Naam is verplicht'], 422);
     $soort = (string) ($in['soort'] ?? 'uitgave');
-    if (!in_array($soort, ['inkomst', 'uitgave'], true)) $soort = 'uitgave';
+    if (!in_array($soort, ['inkomst', 'uitgave', 'neutraal'], true)) $soort = 'uitgave';
     $id = (int) ($in['id'] ?? 0);
     try {
         if ($id > 0) {
@@ -311,8 +311,9 @@ function prive_overzicht(string $from, string $to): array {
     $schuld = (float) db()->query("SELECT COALESCE(SUM(bedrag),0) FROM prive_posten WHERE soort='schuld' AND status='open'")->fetchColumn();
 
     // Bedragen wegen we naar het aandeel van de rekening (gedeelde rekening telt half).
+    // Neutrale categorieën (overboekingen) tellen NIET mee als inkomst/uitgave.
     $q = db()->prepare(
-        "SELECT t.bedrag * r.aandeel / 100 AS bedrag, c.naam AS cat
+        "SELECT t.bedrag * r.aandeel / 100 AS bedrag, c.naam AS cat, c.soort AS catsoort
          FROM prive_transacties t
          JOIN prive_rekeningen r ON r.id = t.rekening_id
          LEFT JOIN prive_categorieen c ON c.id = t.categorie_id
@@ -321,6 +322,7 @@ function prive_overzicht(string $from, string $to): array {
     $q->execute([':f' => $from, ':t' => $to]);
     $inkomsten = 0.0; $uitgaven = 0.0; $perCat = [];
     foreach ($q->fetchAll() as $r) {
+        if (($r['catsoort'] ?? '') === 'neutraal') continue;
         $b = (float) $r['bedrag'];
         if ($b >= 0) $inkomsten += $b; else $uitgaven += $b;
         if ($b < 0) {
@@ -360,6 +362,7 @@ function prive_maandcijfers(int $jaar): array {
     $uit = array_fill(1, 12, 0.0);
     $cats = [];
     foreach ($q->fetchAll() as $row) {
+        if (($row['catsoort'] ?? '') === 'neutraal') continue;   // overboekingen niet meetellen
         $m = (int) $row['m'];
         $b = (float) $row['bedrag'];
         if ($b >= 0) $ink[$m] += $b; else $uit[$m] += $b;

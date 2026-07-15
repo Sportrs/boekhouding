@@ -902,6 +902,7 @@
 
   // ---------------- Pagina: Privé (persoonlijke boekhouding) ----------------
   const PRIVE_REK_SOORT = { bank: 'Betaalrekening', spaar: 'Spaarrekening', contant: 'Contant', bezitting: 'Bezitting', overig: 'Overig' };
+  const PRIVE_CAT_SOORT = { inkomst: '<span class="suc">inkomst</span>', uitgave: '<span class="mut">uitgave</span>', neutraal: '<span class="warn">neutraal (overboeking)</span>' };
   let priveJaar = new Date().getFullYear();
   let priveMaandModus = 'jaar';
   const priveTxFilter = { rekening: '', from: '', to: '', categorie: '', ongecategoriseerd: false, onthoud: true };
@@ -1065,7 +1066,7 @@
     view.innerHTML = pageHead('Categorieën', 'Groepeer je uitgaven en inkomsten.', `<button class="btn btn-brand" id="nieuwCat">+ Categorie</button>`) +
       `<div class="help" style="margin-bottom:16px">Categorieën bepalen hoe je uitgaven en inkomsten worden gegroepeerd. Wijs ze toe bij Transacties; met "onthoud" leert de app ze automatisch toe te kennen bij een volgende import.</div>
         <div class="card"><table class="compact"><thead><tr><th>Categorie</th><th>Soort</th><th></th></tr></thead><tbody>
-        ${cats.map((c) => `<tr><td style="color:var(--ink)">${esc(c.naam)}</td><td>${c.soort === 'inkomst' ? '<span class="suc">inkomst</span>' : '<span class="mut">uitgave</span>'}</td><td class="r"><button class="linkbtn" data-edit="${c.id}">bewerken</button> <button class="linkbtn del" data-del="${c.id}">✕</button></td></tr>`).join('')}
+        ${cats.map((c) => `<tr><td style="color:var(--ink)">${esc(c.naam)}</td><td>${PRIVE_CAT_SOORT[c.soort] || esc(c.soort)}</td><td class="r"><button class="linkbtn" data-edit="${c.id}">bewerken</button> <button class="linkbtn del" data-del="${c.id}">✕</button></td></tr>`).join('')}
         </tbody></table></div>
         <div class="card" style="margin-top:24px"><div class="card-head"><span>Automatische regels</span><div style="display:flex;gap:8px"><button class="btn btn-ghost" id="pasToe">Regels toepassen</button><button class="btn btn-brand" id="nieuwRegel">+ Regel</button></div></div>
           <div class="mut" style="padding:12px 20px 0;font-size:12px;line-height:1.5">Een regel koppelt een <b style="color:var(--inkdim)">zoekterm</b> (die in de tegenpartij of omschrijving voorkomt) aan een categorie, zodat transacties bij import automatisch worden gecategoriseerd. Deze regels ontstaan ook vanzelf als je bij een transactie "onthoud" aanvinkt. <b style="color:var(--inkdim)">Regels toepassen</b> categoriseert bestaande, nog ongecategoriseerde transacties alsnog.</div>
@@ -1196,7 +1197,8 @@
       ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>${cat ? 'Categorie bewerken' : 'Nieuwe categorie'}</h2><button class="x">✕</button></div>
         <div class="modal-body">
           <label class="field"><span>Naam</span><input id="naam" value="${esc(cat ? cat.naam : '')}" /></label>
-          <div class="toggle"><button data-s="uitgave" class="${st.soort === 'uitgave' ? 'active' : ''}">Uitgave</button><button data-s="inkomst" class="${st.soort === 'inkomst' ? 'active' : ''}">Inkomst</button></div>
+          <div class="toggle"><button data-s="uitgave" class="${st.soort === 'uitgave' ? 'active' : ''}">Uitgave</button><button data-s="inkomst" class="${st.soort === 'inkomst' ? 'active' : ''}">Inkomst</button><button data-s="neutraal" class="${st.soort === 'neutraal' ? 'active' : ''}">Neutraal</button></div>
+          ${st.soort === 'neutraal' ? '<div class="help">Een <b>neutrale</b> categorie is voor overboekingen die géén echt inkomen of uitgave zijn: geld van je spaarrekening, opname uit een bouwdepot, RC-opname uit je BV, of een ontvangen/gegeven lening. Deze tellen niet mee in je inkomsten/uitgaven, maar werken je banksaldo wél bij.</div>' : ''}
         </div>
         <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Opslaan</button></div></div>`;
       ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
@@ -1854,6 +1856,7 @@
     priveImport: { q: 'Hoe importeer ik mijn privé-bankafschrift?', a: 'Tabblad <b>Rekeningen</b> → maak een rekening aan (met beginsaldo) → klik <b>importeer</b> en kies je MT940 (<code>.sta</code>) bestand. Dubbele regels worden automatisch overgeslagen, dus je kunt elke maand veilig opnieuw importeren.' },
     priveCat: { q: 'Hoe zie ik waar mijn geld heen gaat?', a: 'Geef transacties een <b>categorie</b> (tabblad Transacties). Met "onthoud" aan krijgt dezelfde tegenpartij voortaan automatisch die categorie bij import. Op het <b>Overzicht</b> zie je je uitgaven per categorie.' },
     privePosten: { q: 'Hoe leg ik een lening of openstaand bedrag vast?', a: 'Tabblad <b>Te ontvangen / betalen</b>: voeg een <b>vordering</b> toe (geld dat je nog krijgt, bv. een lening die je gaf) of een <b>schuld</b> (geld dat je nog moet betalen). Open posten tellen mee in je vermogen; is het afgelost, zet je de post op afgehandeld.' },
+    priveNeutraal: { q: 'Een overboeking wordt als inkomst gezien terwijl het dat niet is — wat nu?', a: 'Sommige bijschrijvingen zijn geen echt inkomen: een overboeking van je <b>spaarrekening</b>, een opname uit een <b>bouwdepot</b>, een <b>RC-opname uit je BV</b>, of een <b>ontvangen/gegeven lening</b>. Geef die transacties een categorie met soort <b>Neutraal (overboeking)</b> (er staan er al een paar klaar). Dan tellen ze niet mee als inkomst of uitgave en vervuilen ze je overzicht niet — je banksaldo blijft wél kloppen. Maak er eventueel een <b>regel</b> voor (bv. zoekterm "bouwdepot"), dan gaat het voortaan vanzelf.' },
   };
   const FAQ_PAGES = {
     dashboard: ['debet', 'inkoop', 'prive', 'btwafdracht', 'rcrente'],
@@ -1864,7 +1867,7 @@
     grootboek: ['grootboekkaart', 'afschrijving', 'rcrente'],
     deelnemingen: ['deelnAfw', 'deelnNieuw'],
     ib: ['ibboxen', 'gebruikelijkloon', 'salarisdividend', 'ibtarieven'],
-    prive: ['priveVermogen', 'priveImport', 'priveCat', 'privePosten'],
+    prive: ['priveVermogen', 'priveImport', 'priveCat', 'priveNeutraal', 'privePosten'],
   };
   function faqBlock(pageKey) {
     const keys = FAQ_PAGES[pageKey] || [];
