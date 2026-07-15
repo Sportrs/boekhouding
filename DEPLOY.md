@@ -96,6 +96,7 @@ opnieuw draaien kan geen kwaad.
 - `migraties/008_prive_aandeel.sql` — kolom `aandeel` op `prive_rekeningen` (voor gedeelde rekeningen, bv. 50%).
 - `migraties/009_prive_neutraal.sql` — neutrale (overboekings)categorieën; deze tellen niet mee als inkomst/uitgave.
 - `migraties/010_prive_koppel.sql` — kolom `koppel_id` op `prive_transacties` (overboekingen tussen eigen rekeningen: beide kanten gekoppeld).
+- `migraties/011_prive_ib_categorie.sql` — categorie "Inkomstenbelasting" (voorlopige + definitieve aanslag; teruggaven verrekenen met betalingen).
 
 ---
 

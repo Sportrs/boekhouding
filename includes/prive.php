@@ -385,12 +385,21 @@ function prive_overzicht(string $from, string $to): array {
     $q->execute([':f' => $from, ':t' => $to]);
     $inkomsten = 0.0; $uitgaven = 0.0; $perCat = [];
     foreach ($q->fetchAll() as $r) {
-        if (($r['catsoort'] ?? '') === 'neutraal') continue;
+        $cs = $r['catsoort'] ?? '';
+        if ($cs === 'neutraal') continue;
         $b = (float) $r['bedrag'];
-        if ($b >= 0) $inkomsten += $b; else $uitgaven += $b;
-        if ($b < 0) {
-            $key = $r['cat'] ?: 'Ongecategoriseerd';
-            $perCat[$key] = ($perCat[$key] ?? 0) + (-$b);
+        // Classificeer op categoriesoort; zonder categorie op het teken. Een teruggaaf
+        // (positief) in een uitgave-categorie verrekent zo met de betaalde bedragen.
+        if ($cs === 'inkomst') {
+            $inkomsten += $b;
+        } elseif ($cs === 'uitgave') {
+            $uitgaven += $b;
+            $perCat[$r['cat']] = ($perCat[$r['cat']] ?? 0) + (-$b);
+        } elseif ($b >= 0) {
+            $inkomsten += $b;
+        } else {
+            $uitgaven += $b;
+            $perCat['Ongecategoriseerd'] = ($perCat['Ongecategoriseerd'] ?? 0) + (-$b);
         }
     }
     arsort($perCat);
@@ -425,10 +434,15 @@ function prive_maandcijfers(int $jaar): array {
     $uit = array_fill(1, 12, 0.0);
     $cats = [];
     foreach ($q->fetchAll() as $row) {
-        if (($row['catsoort'] ?? '') === 'neutraal') continue;   // overboekingen niet meetellen
+        $cs = $row['catsoort'] ?? '';
+        if ($cs === 'neutraal') continue;   // overboekingen niet meetellen
         $m = (int) $row['m'];
         $b = (float) $row['bedrag'];
-        if ($b >= 0) $ink[$m] += $b; else $uit[$m] += $b;
+        // Classificeer op categoriesoort; zonder categorie op het teken.
+        if ($cs === 'inkomst') $ink[$m] += $b;
+        elseif ($cs === 'uitgave') $uit[$m] += $b;
+        elseif ($b >= 0) $ink[$m] += $b;
+        else $uit[$m] += $b;
         $key = $row['cat'] ?: 'Ongecategoriseerd';
         if (!isset($cats[$key])) {
             $cats[$key] = ['naam' => $key, 'soort' => $row['catsoort'] ?: ($b >= 0 ? 'inkomst' : 'uitgave'), 'perMaand' => array_fill(1, 12, 0.0), 'totaal' => 0.0];
