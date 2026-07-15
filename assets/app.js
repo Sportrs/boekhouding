@@ -1022,7 +1022,7 @@
         <td title="${esc(t.omschrijving || '')}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
         <td><select data-txcat="${t.id}" style="min-width:150px">${catOpts(t.categorie_id)}</select></td>
         <td class="num ${t.bedrag >= 0 ? 'suc' : 'dan'}" style="font-weight:500">${euro(t.bedrag)}</td>
-        <td class="r" style="white-space:nowrap"><button class="linkbtn" data-edit="${t.id}">✎</button> <button class="linkbtn del" data-del="${t.id}">🗑</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">Geen transacties. Importeer een afschrift (Rekeningen) of voeg er handmatig een toe.</td></tr>'}
+        <td class="r" style="white-space:nowrap">${t.categorie_soort === 'neutraal' ? `<button class="linkbtn" data-post="${t.id}" title="Maak hier een vordering/schuld van (bv. RC-opname of lening)">→ post</button> ` : ''}<button class="linkbtn" data-edit="${t.id}">✎</button> <button class="linkbtn del" data-del="${t.id}">🗑</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">Geen transacties. Importeer een afschrift (Rekeningen) of voeg er handmatig een toe.</td></tr>'}
       </tbody></table></div></div>`;
     document.getElementById('fRek').onchange = (e) => { priveTxFilter.rekening = e.target.value; laad(); };
     document.getElementById('fCat').onchange = (e) => { const v = e.target.value; if (v === '__leeg') { priveTxFilter.ongecategoriseerd = true; priveTxFilter.categorie = ''; } else { priveTxFilter.ongecategoriseerd = false; priveTxFilter.categorie = v; } laad(); };
@@ -1033,6 +1033,19 @@
     view.querySelectorAll('[data-txcat]').forEach((sel) => sel.onchange = async () => { try { await api('prive_transactie_categorie', { id: Number(sel.dataset.txcat), categorieId: Number(sel.value) || 0, onthoud: priveTxFilter.onthoud }, 'POST'); toast('Categorie opgeslagen'); } catch (e) { toast(e.message, 'error'); } });
     view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveTransactie(tx.find((x) => x.id === Number(b.dataset.edit)), rek, cats, laad));
     view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Transactie verwijderen?')) return; try { await api('prive_transactie_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Verwijderd'); laad(); } catch (e) { toast(e.message, 'error'); } });
+    view.querySelectorAll('[data-post]').forEach((b) => b.onclick = () => {
+      const t = tx.find((x) => x.id === Number(b.dataset.post));
+      if (!t) return;
+      const inkomend = t.bedrag >= 0;   // geld erin = je hebt geleend/opgenomen -> schuld; geld eruit = uitgeleend -> vordering
+      openPrivePost(null, () => { location.hash = '#/prive/posten'; }, {
+        soort: inkomend ? 'schuld' : 'vordering',
+        naam: (inkomend ? 'Ontvangen: ' : 'Uitgeleend: ') + (t.tegenrekening_naam || t.omschrijving || 'overboeking'),
+        bedrag: Math.abs(t.bedrag),
+        tegenpartij: t.tegenrekening_naam || '',
+        datum: t.datum,
+        toelichting: 'Vanuit overboeking van ' + datumNL(t.datum),
+      });
+    });
   }
 
   async function privPosten(view) {
@@ -1157,25 +1170,26 @@
     render();
   }
 
-  function openPrivePost(post, refresh) {
-    const st = { id: post ? post.id : 0, soort: post ? post.soort : 'vordering' };
+  function openPrivePost(post, refresh, prefill) {
+    const src = post || prefill || {};
+    const st = { id: post ? post.id : 0, soort: src.soort || 'vordering' };
     const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
     const close = () => ov.remove();
     function render() {
       ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>${post ? 'Post bewerken' : 'Nieuwe post'}</h2><button class="x">✕</button></div>
         <div class="modal-body">
           <div class="toggle"><button data-s="vordering" class="${st.soort === 'vordering' ? 'active' : ''}">Te ontvangen</button><button data-s="schuld" class="${st.soort === 'schuld' ? 'active' : ''}">Te betalen</button></div>
-          <div class="help">${st.soort === 'vordering' ? 'Een <b>vordering</b>: geld dat je nog krijgt (bv. een lening die je gaf). Telt <b>plus</b> in je vermogen.' : 'Een <b>schuld</b>: geld dat je nog moet betalen (bv. een lening). Telt <b>min</b> in je vermogen.'}</div>
-          <label class="field"><span>Naam</span><input id="naam" value="${esc(post ? post.naam : '')}" placeholder="bijv. Lening aan broer" /></label>
+          <div class="help">${st.soort === 'vordering' ? 'Een <b>vordering</b>: geld dat je nog krijgt (bv. een lening die je gaf). Telt <b>plus</b> in je vermogen.' : 'Een <b>schuld</b>: geld dat je nog moet betalen (bv. een lening of RC-opname uit je BV). Telt <b>min</b> in je vermogen.'}</div>
+          <label class="field"><span>Naam</span><input id="naam" value="${esc(src.naam || '')}" placeholder="bijv. Lening aan broer" /></label>
           <div class="row">
-            <label class="field"><span>Bedrag</span><input class="num" id="bedrag" value="${esc(post ? post.bedrag : '')}" placeholder="0,00" /></label>
-            <label class="field"><span>Tegenpartij</span><input id="tp" value="${esc(post ? (post.tegenpartij || '') : '')}" /></label>
+            <label class="field"><span>Bedrag</span><input class="num" id="bedrag" value="${esc(src.bedrag != null ? src.bedrag : '')}" placeholder="0,00" /></label>
+            <label class="field"><span>Tegenpartij</span><input id="tp" value="${esc(src.tegenpartij || '')}" /></label>
           </div>
           <div class="row">
-            <label class="field"><span>Datum</span><input type="date" id="datum" value="${esc(post ? (post.datum || '') : '')}" /></label>
-            <label class="field"><span>Vervaldatum</span><input type="date" id="verval" value="${esc(post ? (post.vervaldatum || '') : '')}" /></label>
+            <label class="field"><span>Datum</span><input type="date" id="datum" value="${esc(src.datum || '')}" /></label>
+            <label class="field"><span>Vervaldatum</span><input type="date" id="verval" value="${esc(src.vervaldatum || '')}" /></label>
           </div>
-          <label class="field"><span>Toelichting</span><input id="toel" value="${esc(post ? (post.toelichting || '') : '')}" /></label>
+          <label class="field"><span>Toelichting</span><input id="toel" value="${esc(src.toelichting || '')}" /></label>
         </div>
         <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Opslaan</button></div></div>`;
       ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
@@ -1856,7 +1870,7 @@
     priveImport: { q: 'Hoe importeer ik mijn privé-bankafschrift?', a: 'Tabblad <b>Rekeningen</b> → maak een rekening aan (met beginsaldo) → klik <b>importeer</b> en kies je MT940 (<code>.sta</code>) bestand. Dubbele regels worden automatisch overgeslagen, dus je kunt elke maand veilig opnieuw importeren.' },
     priveCat: { q: 'Hoe zie ik waar mijn geld heen gaat?', a: 'Geef transacties een <b>categorie</b> (tabblad Transacties). Met "onthoud" aan krijgt dezelfde tegenpartij voortaan automatisch die categorie bij import. Op het <b>Overzicht</b> zie je je uitgaven per categorie.' },
     privePosten: { q: 'Hoe leg ik een lening of openstaand bedrag vast?', a: 'Tabblad <b>Te ontvangen / betalen</b>: voeg een <b>vordering</b> toe (geld dat je nog krijgt, bv. een lening die je gaf) of een <b>schuld</b> (geld dat je nog moet betalen). Open posten tellen mee in je vermogen; is het afgelost, zet je de post op afgehandeld.' },
-    priveNeutraal: { q: 'Een overboeking wordt als inkomst gezien terwijl het dat niet is — wat nu?', a: 'Sommige bijschrijvingen zijn geen echt inkomen: een overboeking van je <b>spaarrekening</b>, een opname uit een <b>bouwdepot</b>, een <b>RC-opname uit je BV</b>, of een <b>ontvangen/gegeven lening</b>. Geef die transacties een categorie met soort <b>Neutraal (overboeking)</b> (er staan er al een paar klaar). Dan tellen ze niet mee als inkomst of uitgave en vervuilen ze je overzicht niet — je banksaldo blijft wél kloppen. Maak er eventueel een <b>regel</b> voor (bv. zoekterm "bouwdepot"), dan gaat het voortaan vanzelf.' },
+    priveNeutraal: { q: 'Een overboeking wordt als inkomst gezien terwijl het dat niet is — wat nu?', a: 'Sommige bijschrijvingen zijn geen echt inkomen: een overboeking van je <b>spaarrekening</b>, een opname uit een <b>bouwdepot</b>, een <b>RC-opname uit je BV</b>, of een <b>ontvangen/gegeven lening</b>. Geef die transacties een categorie met soort <b>Neutraal (overboeking)</b> (er staan er al een paar klaar). Dan tellen ze niet mee als inkomst of uitgave en vervuilen ze je overzicht niet — je banksaldo blijft wél kloppen. Maak er eventueel een <b>regel</b> voor (bv. zoekterm "bouwdepot"), dan gaat het voortaan vanzelf. Wil je dat het bedrag ook je <b>vermogen</b> corrigeert (bv. een RC-opname of ontvangen lening die je nog moet terugbetalen)? Klik dan bij zo\'n transactie op <b>→ post</b> om er in één klik een schuld/vordering van te maken.' },
   };
   const FAQ_PAGES = {
     dashboard: ['debet', 'inkoop', 'prive', 'btwafdracht', 'rcrente'],
