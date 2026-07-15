@@ -55,7 +55,7 @@
   }
 
   // ---------------- State ----------------
-  const state = { authed: false, settings: null, accounts: [] };
+  const state = { authed: false, settings: null, accounts: [], mode: 'gibs' };
 
   async function loadSettings() { state.settings = await api('instellingen'); }
   async function loadAccounts() { state.accounts = await api('rekeningen'); }
@@ -67,6 +67,7 @@
       state.authed = !!me.authenticated;
     } catch { state.authed = false; }
     if (state.authed) {
+      state.mode = localStorage.getItem('bh_mode') === 'prive' ? 'prive' : 'gibs';
       await loadSettings().catch(() => {});
       renderShell();
     } else {
@@ -100,7 +101,7 @@
   }
 
   // ---------------- Shell + routing ----------------
-  const ROUTES = [
+  const GIBS_ROUTES = [
     { hash: '#/', label: 'Dashboard', ic: '▤', page: pageDashboard },
     { hash: '#/facturen', label: 'Facturen invoeren', ic: '＋', page: pageFacturen },
     { hash: '#/journaal', label: 'Journaal', ic: '≣', page: pageJournaal },
@@ -110,27 +111,62 @@
     { hash: '#/jaarverslag', label: 'Jaarverslag', ic: '▦', page: pageJaarverslag },
     { hash: '#/deelnemingen', label: 'Deelnemingen', ic: '◈', page: pageDeelnemingen },
     { hash: '#/ib', label: 'Inkomstenbelasting', ic: '§', page: pageIB },
-    { hash: '#/prive', label: 'Privé', ic: '⌂', page: pagePrive },
     { hash: '#/import', label: 'Import', ic: '⇪', page: pageImport },
     { hash: '#/instellingen', label: 'Instellingen', ic: '⚙', page: pageInstellingen },
   ];
+  const PRIVE_ROUTES = [
+    { hash: '#/prive', label: 'Overzicht', ic: '▤', page: privOverzicht },
+    { hash: '#/prive/rekeningen', label: 'Rekeningen', ic: '⇄', page: privRekeningen },
+    { hash: '#/prive/transacties', label: 'Transacties', ic: '≣', page: privTransacties },
+    { hash: '#/prive/posten', label: 'Te ontvangen / betalen', ic: '◈', page: privPosten },
+    { hash: '#/prive/categorieen', label: 'Categorieën', ic: '☰', page: privCategorieen },
+  ];
+  const currentRoutes = () => (state.mode === 'prive' ? PRIVE_ROUTES : GIBS_ROUTES);
+
+  function switchMode(m) {
+    if (m !== 'gibs' && m !== 'prive') return;
+    state.mode = m;
+    localStorage.setItem('bh_mode', m);
+    location.hash = currentRoutes()[0].hash;
+    renderShell();
+  }
 
   function renderShell() {
     const s = state.settings || {};
+    const bedrijf = s.bedrijfsnaam || 'GIBS B.V.';
+    const routes = currentRoutes();
+    const isPrive = state.mode === 'prive';
     app.innerHTML = `
       <div class="app">
         <aside class="sidebar">
           <div class="sidebar-head">
-            <div class="naam">${esc(s.bedrijfsnaam || 'BV Boekhouding')}</div>
-            <div class="jaar">Boekjaar ${esc(s.boekjaar || '')}</div>
+            <button class="ws-switch" id="wsSwitch">
+              <div style="min-width:0">
+                <div class="naam">${isPrive ? '⌂ Privé' : esc(bedrijf)}</div>
+                <div class="jaar">${isPrive ? 'Persoonlijke boekhouding' : 'Boekjaar ' + esc(s.boekjaar || '')}</div>
+              </div>
+              <span class="ws-caret">⇅</span>
+            </button>
+            <div class="ws-menu" id="wsMenu" hidden>
+              <button data-mode="gibs" class="${!isPrive ? 'active' : ''}"><div class="t">🏢 ${esc(bedrijf)}</div><div class="mut">Zakelijke boekhouding</div></button>
+              <button data-mode="prive" class="${isPrive ? 'active' : ''}"><div class="t">⌂ Privé</div><div class="mut">Persoonlijke boekhouding</div></button>
+            </div>
           </div>
           <nav class="nav" id="nav">
-            ${ROUTES.map((r) => `<a data-hash="${r.hash}"><span class="ic">${r.ic}</span>${r.label}</a>`).join('')}
+            ${routes.map((r) => `<a data-hash="${r.hash}"><span class="ic">${r.ic}</span>${r.label}</a>`).join('')}
           </nav>
           <div class="sidebar-foot"><button id="logout">⎋ Uitloggen</button></div>
         </aside>
         <main class="main"><div class="container" id="view"></div></main>
       </div>`;
+    const menu = document.getElementById('wsMenu');
+    document.getElementById('wsSwitch').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const opening = menu.hidden;
+      menu.hidden = !opening;
+      if (opening) setTimeout(() => document.addEventListener('click', () => { menu.hidden = true; }, { once: true }), 0);
+    });
+    menu.addEventListener('click', (e) => { const b = e.target.closest('button[data-mode]'); if (b) switchMode(b.dataset.mode); });
     document.getElementById('nav').addEventListener('click', (e) => {
       const a = e.target.closest('a[data-hash]');
       if (a) { location.hash = a.dataset.hash; }
@@ -145,8 +181,9 @@
 
   function renderRoute() {
     if (!state.authed) return;
-    const hash = location.hash || '#/';
-    const route = ROUTES.find((r) => r.hash === hash) || ROUTES[0];
+    const routes = currentRoutes();
+    const hash = location.hash || routes[0].hash;
+    const route = routes.find((r) => r.hash === hash) || routes[0];
     document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.hash === route.hash));
     const view = document.getElementById('view');
     if (view) { view.innerHTML = '<div class="mut">Laden…</div>'; route.page(view); }
@@ -864,111 +901,101 @@
 
   // ---------------- Pagina: Privé (persoonlijke boekhouding) ----------------
   const PRIVE_REK_SOORT = { bank: 'Betaalrekening', spaar: 'Spaarrekening', contant: 'Contant', bezitting: 'Bezitting', overig: 'Overig' };
-  async function pagePrive(view) {
-    let tab = 'overzicht';
-    let jaar = new Date().getFullYear();
-    const txFilter = { rekening: '', from: '', to: '', categorie: '', ongecategoriseerd: false, onthoud: true };
-    const TABS = [['overzicht', 'Overzicht'], ['rekeningen', 'Rekeningen'], ['transacties', 'Transacties'], ['posten', 'Te ontvangen / betalen'], ['categorieen', 'Categorieën']];
+  let priveJaar = new Date().getFullYear();
+  const priveTxFilter = { rekening: '', from: '', to: '', categorie: '', ongecategoriseerd: false, onthoud: true };
 
-    function shell() {
-      view.innerHTML = pageHead('Privé', 'Je persoonlijke boekhouding — volledig los van de BV.') +
-        `<div class="tabs" style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">${TABS.map(([k, l]) => `<button data-ptab="${k}" class="${tab === k ? 'active' : ''}">${l}</button>`).join('')}</div>` +
-        `<div id="pbody"><div class="mut">Laden…</div></div>`;
-      view.querySelectorAll('[data-ptab]').forEach((b) => b.onclick = () => { tab = b.dataset.ptab; shell(); });
-      renderTab();
-    }
-    async function renderTab() {
-      const body = document.getElementById('pbody');
-      try {
-        if (tab === 'overzicht') await renderOverzicht(body);
-        else if (tab === 'rekeningen') await renderRekeningen(body);
-        else if (tab === 'transacties') await renderTransacties(body);
-        else if (tab === 'posten') await renderPosten(body);
-        else await renderCategorieen(body);
-      } catch (e) { body.innerHTML = `<div class="dan">${esc(e.message)}</div>`; }
-    }
-
-    async function renderOverzicht(body) {
-      const d = await api('prive_overzicht', { jaar });
-      const maxCat = Math.max(1, ...d.perCategorie.map((c) => c.bedrag));
-      body.innerHTML = `
-        <div class="grid grid-4">
-          ${stat('Vermogen', euro(d.vermogen), d.vermogen >= 0 ? 'suc' : 'dan')}
-          ${stat('Op rekeningen', euro(d.totRekeningen))}
-          ${stat('Nog te ontvangen', euro(d.vorderingen), 'suc')}
-          ${stat('Nog te betalen', euro(d.schulden), 'dan')}
-        </div>
-        <div class="page-actions" style="margin:16px 0"><label class="mut" style="font-size:13px">Jaar:</label> <input type="number" id="pjaar" value="${jaar}" style="width:96px" /></div>
-        <div class="grid grid-2">
-          <div class="card"><div class="card-head">Inkomsten & uitgaven ${jaar}</div><div class="card-body">
-            <div style="display:flex;justify-content:space-between;padding:6px 0"><span>Inkomsten</span><span class="num suc">${euro(d.inkomsten)}</span></div>
-            <div style="display:flex;justify-content:space-between;padding:6px 0"><span>Uitgaven</span><span class="num dan">${euro(d.uitgaven)}</span></div>
-            <div style="display:flex;justify-content:space-between;padding:8px 0 0;border-top:1px solid var(--line);font-weight:600"><span>Saldo</span><span class="num ${round2(d.inkomsten + d.uitgaven) >= 0 ? 'suc' : 'dan'}">${euro(round2(d.inkomsten + d.uitgaven))}</span></div>
-          </div></div>
-          <div class="card"><div class="card-head">Rekeningen</div><table class="compact"><tbody>${d.rekeningen.length ? d.rekeningen.map((r) => `<tr><td>${esc(r.naam)} <span class="badge">${PRIVE_REK_SOORT[r.soort] || r.soort}</span></td><td class="num" style="color:var(--ink)">${euro(r.saldo)}</td></tr>`).join('') : '<tr><td class="empty">Nog geen rekeningen.</td></tr>'}</tbody></table></div>
-        </div>
-        <div class="card" style="margin-top:16px"><div class="card-head">Uitgaven per categorie ${jaar}</div><div class="card-body" style="display:flex;flex-direction:column;gap:10px">
-          ${d.perCategorie.length ? d.perCategorie.map((c) => `<div><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span>${esc(c.naam)}</span><span class="num">${euro(c.bedrag)}</span></div><div style="background:var(--surface2);border-radius:4px;height:8px;overflow:hidden"><div style="width:${Math.round(c.bedrag / maxCat * 100)}%;height:100%;background:var(--brand)"></div></div></div>`).join('') : '<div class="mut">Nog geen uitgaven in deze periode.</div>'}
+  async function privOverzicht(view) {
+    const laad = () => privOverzicht(view);
+    let d;
+    try { d = await api('prive_overzicht', { jaar: priveJaar }); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    const maxCat = Math.max(1, ...d.perCategorie.map((c) => c.bedrag));
+    const gedeeld = d.rekeningen.some((r) => r.aandeel < 100);
+    view.innerHTML = pageHead('Overzicht', 'Je persoonlijke vermogen en uitgaven — volledig los van de BV.') + `
+      <div class="grid grid-4">
+        ${stat('Vermogen', euro(d.vermogen), d.vermogen >= 0 ? 'suc' : 'dan')}
+        ${stat('Op rekeningen', euro(d.totRekeningen))}
+        ${stat('Nog te ontvangen', euro(d.vorderingen), 'suc')}
+        ${stat('Nog te betalen', euro(d.schulden), 'dan')}
+      </div>
+      <div class="page-actions" style="margin:16px 0"><label class="mut" style="font-size:13px">Jaar:</label> <input type="number" id="pjaar" value="${priveJaar}" style="width:96px" /></div>
+      <div class="grid grid-2">
+        <div class="card"><div class="card-head">Inkomsten & uitgaven ${priveJaar}</div><div class="card-body">
+          <div style="display:flex;justify-content:space-between;padding:6px 0"><span>Inkomsten</span><span class="num suc">${euro(d.inkomsten)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:6px 0"><span>Uitgaven</span><span class="num dan">${euro(d.uitgaven)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0 0;border-top:1px solid var(--line);font-weight:600"><span>Saldo</span><span class="num ${round2(d.inkomsten + d.uitgaven) >= 0 ? 'suc' : 'dan'}">${euro(round2(d.inkomsten + d.uitgaven))}</span></div>
         </div></div>
-        ${faqBlock('prive')}`;
-      document.getElementById('pjaar').onchange = (e) => { const j = Number(e.target.value); if (j >= 2000 && j <= 2100) { jaar = j; renderTab(); } };
-    }
+        <div class="card"><div class="card-head">Rekeningen</div><table class="compact"><tbody>${d.rekeningen.length ? d.rekeningen.map((r) => `<tr><td>${esc(r.naam)} <span class="badge">${PRIVE_REK_SOORT[r.soort] || r.soort}</span>${r.aandeel < 100 ? ` <span class="badge" style="color:var(--warning)">${r.aandeel}%</span>` : ''}</td><td class="num" style="color:var(--ink)">${euro(r.saldo)}${r.aandeel < 100 ? `<div class="mut" style="font-size:11px">jouw deel ${euro(r.aandeelSaldo)}</div>` : ''}</td></tr>`).join('') : '<tr><td class="empty">Nog geen rekeningen.</td></tr>'}</tbody></table></div>
+      </div>
+      <div class="card" style="margin-top:16px"><div class="card-head">Uitgaven per categorie ${priveJaar}</div><div class="card-body" style="display:flex;flex-direction:column;gap:10px">
+        ${d.perCategorie.length ? d.perCategorie.map((c) => `<div><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span>${esc(c.naam)}</span><span class="num">${euro(c.bedrag)}</span></div><div style="background:var(--surface2);border-radius:4px;height:8px;overflow:hidden"><div style="width:${Math.round(c.bedrag / maxCat * 100)}%;height:100%;background:var(--brand)"></div></div></div>`).join('') : '<div class="mut">Nog geen uitgaven in deze periode.</div>'}
+        ${gedeeld ? '<div class="mut" style="font-size:12px;margin-top:4px">Bedragen van gedeelde rekeningen tellen voor jouw aandeel mee (bv. 50%).</div>' : ''}
+      </div></div>
+      ${faqBlock('prive')}`;
+    document.getElementById('pjaar').onchange = (e) => { const j = Number(e.target.value); if (j >= 2000 && j <= 2100) { priveJaar = j; laad(); } };
+  }
 
-    async function renderRekeningen(body) {
-      const rek = await api('prive_rekeningen');
-      body.innerHTML = `<div class="help" style="margin-bottom:16px">Maak per betaal-/spaarrekening een rekening aan (met <b>beginsaldo</b>) en importeer je MT940 (<code>.sta</code>)-afschrift met <b>importeer</b>. Ook bezittingen (auto, beleggingen) kun je als rekening met een waarde toevoegen — die tellen mee in je vermogen.</div>
-        <div class="page-actions" style="margin-bottom:12px"><button class="btn btn-brand" id="nieuwRek">+ Rekening</button></div>
-        <div class="card"><table class="compact"><thead><tr><th>Naam</th><th>Soort</th><th>IBAN</th><th class="r">Saldo</th><th></th></tr></thead><tbody>
-        ${rek.length ? rek.map((r) => `<tr><td style="color:var(--ink)">${esc(r.naam)}</td><td>${PRIVE_REK_SOORT[r.soort] || r.soort}</td><td class="mut">${esc(r.iban || '')}</td><td class="num" style="color:var(--ink)">${euro(r.saldo)}</td>
-          <td class="r" style="white-space:nowrap">${(r.soort === 'bank' || r.soort === 'spaar') ? `<button class="btn btn-success" data-imp="${r.id}" style="padding:4px 10px">importeer</button> ` : ''}<button class="linkbtn" data-edit="${r.id}">bewerken</button> <button class="linkbtn del" data-del="${r.id}">✕</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty">Nog geen rekeningen.</td></tr>'}
+  async function privRekeningen(view) {
+    const laad = () => privRekeningen(view);
+    let rek;
+    try { rek = await api('prive_rekeningen'); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    view.innerHTML = pageHead('Rekeningen', 'Je privérekeningen, saldo en bankimport.', `<button class="btn btn-brand" id="nieuwRek">+ Rekening</button>`) +
+      `<div class="help" style="margin-bottom:16px">Maak per rekening een regel aan (met <b>beginsaldo</b>) en klik <b>importeer</b> voor je afschrift — <b>ING CSV</b> (<code>.csv</code>) of <b>MT940</b> (<code>.sta</code>, o.a. bunq) worden automatisch herkend. Ook bezittingen (auto, beleggingen) kun je als rekening toevoegen. Bij een <b>gedeelde rekening</b> zet je je <b>aandeel</b> (bv. 50%) — dan telt alleen jouw deel mee in je vermogen en uitgaven.</div>
+        <div class="card"><table class="compact"><thead><tr><th>Naam</th><th>Soort</th><th>IBAN</th><th class="r">Aandeel</th><th class="r">Saldo</th><th></th></tr></thead><tbody>
+        ${rek.length ? rek.map((r) => `<tr><td style="color:var(--ink)">${esc(r.naam)}</td><td>${PRIVE_REK_SOORT[r.soort] || r.soort}</td><td class="mut">${esc(r.iban || '')}</td><td class="num">${r.aandeel}%</td><td class="num" style="color:var(--ink)">${euro(r.saldo)}${r.aandeel < 100 ? `<div class="mut" style="font-size:11px">jouw deel ${euro(r.aandeelSaldo)}</div>` : ''}</td>
+          <td class="r" style="white-space:nowrap">${(r.soort === 'bank' || r.soort === 'spaar') ? `<button class="btn btn-success" data-imp="${r.id}" style="padding:4px 10px">importeer</button> ` : ''}<button class="linkbtn" data-edit="${r.id}">bewerken</button> <button class="linkbtn del" data-del="${r.id}">✕</button></td></tr>`).join('') : '<tr><td colspan="6" class="empty">Nog geen rekeningen.</td></tr>'}
         </tbody></table></div>
-        <input type="file" id="mtfile" accept=".sta,.txt,text/plain" style="display:none" />`;
-      document.getElementById('nieuwRek').onclick = () => openPriveRekening(null, renderTab);
-      body.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveRekening(rek.find((x) => x.id === Number(b.dataset.edit)), renderTab));
-      body.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Rekening én alle bijbehorende transacties verwijderen?')) return; try { await api('prive_rekening_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Verwijderd'); renderTab(); } catch (e) { toast(e.message, 'error'); } });
-      const mtfile = document.getElementById('mtfile'); let impRek = 0;
-      body.querySelectorAll('[data-imp]').forEach((b) => b.onclick = () => { impRek = Number(b.dataset.imp); mtfile.click(); });
-      mtfile.onchange = async () => { const f = mtfile.files[0]; if (!f) return; try { const tekst = await f.text(); const r = await api('prive_bank_import', { rekeningId: impRek, bestand: tekst }, 'POST'); toast(`${r.geimporteerd} geïmporteerd, ${r.overgeslagen} overgeslagen`); renderTab(); } catch (e) { toast(e.message, 'error'); } finally { mtfile.value = ''; } };
-    }
+        <input type="file" id="mtfile" accept=".sta,.csv,.txt,text/plain" style="display:none" />`;
+    document.getElementById('nieuwRek').onclick = () => openPriveRekening(null, laad);
+    view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveRekening(rek.find((x) => x.id === Number(b.dataset.edit)), laad));
+    view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Rekening én alle bijbehorende transacties verwijderen?')) return; try { await api('prive_rekening_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Verwijderd'); laad(); } catch (e) { toast(e.message, 'error'); } });
+    const mtfile = document.getElementById('mtfile'); let impRek = 0;
+    view.querySelectorAll('[data-imp]').forEach((b) => b.onclick = () => { impRek = Number(b.dataset.imp); mtfile.click(); });
+    mtfile.onchange = async () => { const f = mtfile.files[0]; if (!f) return; try { const tekst = await f.text(); const r = await api('prive_bank_import', { rekeningId: impRek, bestand: tekst }, 'POST'); toast(`${r.geimporteerd} geïmporteerd (${r.formaat}), ${r.overgeslagen} overgeslagen`); laad(); } catch (e) { toast(e.message, 'error'); } finally { mtfile.value = ''; } };
+  }
 
-    async function renderTransacties(body) {
-      const [rek, cats] = await Promise.all([api('prive_rekeningen'), api('prive_categorieen')]);
-      const tx = await api('prive_transacties', { rekening: txFilter.rekening, from: txFilter.from, to: txFilter.to, categorie: txFilter.categorie, ongecategoriseerd: txFilter.ongecategoriseerd ? 1 : '' });
-      const catOpts = (sel) => '<option value="">—</option>' + cats.map((c) => `<option value="${c.id}" ${Number(sel) === c.id ? 'selected' : ''}>${esc(c.naam)}</option>`).join('');
-      body.innerHTML = `
-        <div class="page-actions" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
-          <select id="fRek" style="width:auto"><option value="">Alle rekeningen</option>${rek.map((r) => `<option value="${r.id}" ${String(txFilter.rekening) === String(r.id) ? 'selected' : ''}>${esc(r.naam)}</option>`).join('')}</select>
-          <select id="fCat" style="width:auto"><option value="">Alle categorieën</option><option value="__leeg" ${txFilter.ongecategoriseerd ? 'selected' : ''}>— zonder categorie —</option>${cats.map((c) => `<option value="${c.id}" ${String(txFilter.categorie) === String(c.id) ? 'selected' : ''}>${esc(c.naam)}</option>`).join('')}</select>
-          <input type="date" id="fFrom" value="${txFilter.from}" style="width:auto" /><span class="mut">t/m</span><input type="date" id="fTo" value="${txFilter.to}" style="width:auto" />
-          <label class="mut" style="font-size:13px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="onthoud" ${txFilter.onthoud ? 'checked' : ''} style="width:auto" /> onthoud categorie</label>
-          <button class="btn btn-brand" id="nieuwTx">+ Transactie</button>
-        </div>
-        <div class="card" style="overflow:hidden"><div style="overflow-x:auto"><table class="compact"><thead><tr><th>Datum</th><th>Rekening</th><th>Tegenpartij</th><th>Omschrijving</th><th>Categorie</th><th class="r">Bedrag</th><th></th></tr></thead><tbody>
-        ${tx.length ? tx.map((t) => `<tr>
-          <td class="num" style="text-align:left">${datumNL(t.datum)}</td>
-          <td class="mut">${esc(t.rekening_naam || '')}</td>
-          <td title="${esc(t.tegenrekening_naam || '')}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.tegenrekening_naam || '—')}</td>
-          <td title="${esc(t.omschrijving || '')}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
-          <td><select data-txcat="${t.id}" style="min-width:150px">${catOpts(t.categorie_id)}</select></td>
-          <td class="num ${t.bedrag >= 0 ? 'suc' : 'dan'}" style="font-weight:500">${euro(t.bedrag)}</td>
-          <td class="r" style="white-space:nowrap"><button class="linkbtn" data-edit="${t.id}">✎</button> <button class="linkbtn del" data-del="${t.id}">🗑</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">Geen transacties. Importeer een afschrift (tab Rekeningen) of voeg er handmatig een toe.</td></tr>'}
-        </tbody></table></div></div>`;
-      document.getElementById('fRek').onchange = (e) => { txFilter.rekening = e.target.value; renderTab(); };
-      document.getElementById('fCat').onchange = (e) => { const v = e.target.value; if (v === '__leeg') { txFilter.ongecategoriseerd = true; txFilter.categorie = ''; } else { txFilter.ongecategoriseerd = false; txFilter.categorie = v; } renderTab(); };
-      document.getElementById('fFrom').onchange = (e) => { txFilter.from = e.target.value; renderTab(); };
-      document.getElementById('fTo').onchange = (e) => { txFilter.to = e.target.value; renderTab(); };
-      document.getElementById('onthoud').onchange = (e) => { txFilter.onthoud = e.target.checked; };
-      document.getElementById('nieuwTx').onclick = () => openPriveTransactie(null, rek, cats, renderTab);
-      body.querySelectorAll('[data-txcat]').forEach((sel) => sel.onchange = async () => { try { await api('prive_transactie_categorie', { id: Number(sel.dataset.txcat), categorieId: Number(sel.value) || 0, onthoud: txFilter.onthoud }, 'POST'); toast('Categorie opgeslagen'); } catch (e) { toast(e.message, 'error'); } });
-      body.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveTransactie(tx.find((x) => x.id === Number(b.dataset.edit)), rek, cats, renderTab));
-      body.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Transactie verwijderen?')) return; try { await api('prive_transactie_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Verwijderd'); renderTab(); } catch (e) { toast(e.message, 'error'); } });
-    }
+  async function privTransacties(view) {
+    const laad = () => privTransacties(view);
+    let rek, cats, tx;
+    try {
+      [rek, cats] = await Promise.all([api('prive_rekeningen'), api('prive_categorieen')]);
+      tx = await api('prive_transacties', { rekening: priveTxFilter.rekening, from: priveTxFilter.from, to: priveTxFilter.to, categorie: priveTxFilter.categorie, ongecategoriseerd: priveTxFilter.ongecategoriseerd ? 1 : '' });
+    } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    const catOpts = (sel) => '<option value="">—</option>' + cats.map((c) => `<option value="${c.id}" ${Number(sel) === c.id ? 'selected' : ''}>${esc(c.naam)}</option>`).join('');
+    view.innerHTML = pageHead('Transacties', 'Al je privéboekingen — wijs categorieën toe om je uitgaven te volgen.', `<button class="btn btn-brand" id="nieuwTx">+ Transactie</button>`) + `
+      <div class="page-actions" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <select id="fRek" style="width:auto"><option value="">Alle rekeningen</option>${rek.map((r) => `<option value="${r.id}" ${String(priveTxFilter.rekening) === String(r.id) ? 'selected' : ''}>${esc(r.naam)}</option>`).join('')}</select>
+        <select id="fCat" style="width:auto"><option value="">Alle categorieën</option><option value="__leeg" ${priveTxFilter.ongecategoriseerd ? 'selected' : ''}>— zonder categorie —</option>${cats.map((c) => `<option value="${c.id}" ${String(priveTxFilter.categorie) === String(c.id) ? 'selected' : ''}>${esc(c.naam)}</option>`).join('')}</select>
+        <input type="date" id="fFrom" value="${priveTxFilter.from}" style="width:auto" /><span class="mut">t/m</span><input type="date" id="fTo" value="${priveTxFilter.to}" style="width:auto" />
+        <label class="mut" style="font-size:13px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="onthoud" ${priveTxFilter.onthoud ? 'checked' : ''} style="width:auto" /> onthoud categorie</label>
+      </div>
+      <div class="card" style="overflow:hidden"><div style="overflow-x:auto"><table class="compact"><thead><tr><th>Datum</th><th>Rekening</th><th>Tegenpartij</th><th>Omschrijving</th><th>Categorie</th><th class="r">Bedrag</th><th></th></tr></thead><tbody>
+      ${tx.length ? tx.map((t) => `<tr>
+        <td class="num" style="text-align:left">${datumNL(t.datum)}</td>
+        <td class="mut">${esc(t.rekening_naam || '')}</td>
+        <td title="${esc(t.tegenrekening_naam || '')}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.tegenrekening_naam || '—')}</td>
+        <td title="${esc(t.omschrijving || '')}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
+        <td><select data-txcat="${t.id}" style="min-width:150px">${catOpts(t.categorie_id)}</select></td>
+        <td class="num ${t.bedrag >= 0 ? 'suc' : 'dan'}" style="font-weight:500">${euro(t.bedrag)}</td>
+        <td class="r" style="white-space:nowrap"><button class="linkbtn" data-edit="${t.id}">✎</button> <button class="linkbtn del" data-del="${t.id}">🗑</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">Geen transacties. Importeer een afschrift (Rekeningen) of voeg er handmatig een toe.</td></tr>'}
+      </tbody></table></div></div>`;
+    document.getElementById('fRek').onchange = (e) => { priveTxFilter.rekening = e.target.value; laad(); };
+    document.getElementById('fCat').onchange = (e) => { const v = e.target.value; if (v === '__leeg') { priveTxFilter.ongecategoriseerd = true; priveTxFilter.categorie = ''; } else { priveTxFilter.ongecategoriseerd = false; priveTxFilter.categorie = v; } laad(); };
+    document.getElementById('fFrom').onchange = (e) => { priveTxFilter.from = e.target.value; laad(); };
+    document.getElementById('fTo').onchange = (e) => { priveTxFilter.to = e.target.value; laad(); };
+    document.getElementById('onthoud').onchange = (e) => { priveTxFilter.onthoud = e.target.checked; };
+    document.getElementById('nieuwTx').onclick = () => openPriveTransactie(null, rek, cats, laad);
+    view.querySelectorAll('[data-txcat]').forEach((sel) => sel.onchange = async () => { try { await api('prive_transactie_categorie', { id: Number(sel.dataset.txcat), categorieId: Number(sel.value) || 0, onthoud: priveTxFilter.onthoud }, 'POST'); toast('Categorie opgeslagen'); } catch (e) { toast(e.message, 'error'); } });
+    view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveTransactie(tx.find((x) => x.id === Number(b.dataset.edit)), rek, cats, laad));
+    view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Transactie verwijderen?')) return; try { await api('prive_transactie_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Verwijderd'); laad(); } catch (e) { toast(e.message, 'error'); } });
+  }
 
-    async function renderPosten(body) {
-      const posten = await api('prive_posten');
-      const soortLbl = (s) => s === 'vordering' ? '<span class="suc">te ontvangen</span>' : '<span class="dan">te betalen</span>';
-      body.innerHTML = `<div class="help" style="margin-bottom:16px">Leg vast wat je nog moet <b>ontvangen</b> (bv. een lening die je hebt gegeven) of <b>betalen</b> (bv. een lening/schuld). <b>Open</b> posten tellen mee in je vermogen; is het afgelost, zet je 'm op afgehandeld.</div>
-        <div class="page-actions" style="margin-bottom:12px"><button class="btn btn-brand" id="nieuwPost">+ Post</button></div>
+  async function privPosten(view) {
+    const laad = () => privPosten(view);
+    let posten;
+    try { posten = await api('prive_posten'); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    const soortLbl = (s) => s === 'vordering' ? '<span class="suc">te ontvangen</span>' : '<span class="dan">te betalen</span>';
+    view.innerHTML = pageHead('Te ontvangen / betalen', 'Openstaande bedragen die je nog krijgt of moet betalen.', `<button class="btn btn-brand" id="nieuwPost">+ Post</button>`) +
+      `<div class="help" style="margin-bottom:16px">Leg vast wat je nog moet <b>ontvangen</b> (bv. een lening die je hebt gegeven) of <b>betalen</b> (bv. een lening/schuld). <b>Open</b> posten tellen mee in je vermogen; is het afgelost, zet je 'm op afgehandeld.</div>
         <div class="card"><table class="compact"><thead><tr><th>Naam</th><th>Tegenpartij</th><th>Soort</th><th class="r">Bedrag</th><th>Vervalt</th><th>Status</th><th></th></tr></thead><tbody>
         ${posten.length ? posten.map((p) => `<tr style="${p.status === 'afgehandeld' ? 'opacity:.55' : ''}">
           <td style="color:var(--ink)">${esc(p.naam)}${p.toelichting ? `<div class="mut" style="font-size:12px">${esc(p.toelichting)}</div>` : ''}</td>
@@ -979,26 +1006,25 @@
           <td>${p.status === 'open' ? '<span class="badge" style="color:var(--warning)">open</span>' : '<span class="badge">afgehandeld</span>'}</td>
           <td class="r" style="white-space:nowrap">${p.status === 'open' ? `<button class="linkbtn" data-af="${p.id}">afhandelen</button> ` : `<button class="linkbtn" data-her="${p.id}">heropenen</button> `}<button class="linkbtn" data-edit="${p.id}">✎</button> <button class="linkbtn del" data-del="${p.id}">✕</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">Nog geen posten.</td></tr>'}
         </tbody></table></div>`;
-      document.getElementById('nieuwPost').onclick = () => openPrivePost(null, renderTab);
-      body.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPrivePost(posten.find((x) => x.id === Number(b.dataset.edit)), renderTab));
-      body.querySelectorAll('[data-af]').forEach((b) => b.onclick = async () => { await api('prive_post_status', { id: Number(b.dataset.af), status: 'afgehandeld' }, 'POST'); renderTab(); });
-      body.querySelectorAll('[data-her]').forEach((b) => b.onclick = async () => { await api('prive_post_status', { id: Number(b.dataset.her), status: 'open' }, 'POST'); renderTab(); });
-      body.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Post verwijderen?')) return; await api('prive_post_verwijder', { id: Number(b.dataset.del) }, 'POST'); renderTab(); });
-    }
+    document.getElementById('nieuwPost').onclick = () => openPrivePost(null, laad);
+    view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPrivePost(posten.find((x) => x.id === Number(b.dataset.edit)), laad));
+    view.querySelectorAll('[data-af]').forEach((b) => b.onclick = async () => { await api('prive_post_status', { id: Number(b.dataset.af), status: 'afgehandeld' }, 'POST'); laad(); });
+    view.querySelectorAll('[data-her]').forEach((b) => b.onclick = async () => { await api('prive_post_status', { id: Number(b.dataset.her), status: 'open' }, 'POST'); laad(); });
+    view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Post verwijderen?')) return; await api('prive_post_verwijder', { id: Number(b.dataset.del) }, 'POST'); laad(); });
+  }
 
-    async function renderCategorieen(body) {
-      const cats = await api('prive_categorieen');
-      body.innerHTML = `<div class="help" style="margin-bottom:16px">Categorieën bepalen hoe je uitgaven en inkomsten worden gegroepeerd. Wijs ze toe bij Transacties; met "onthoud" leert de app ze automatisch toe te kennen bij een volgende import.</div>
-        <div class="page-actions" style="margin-bottom:12px"><button class="btn btn-brand" id="nieuwCat">+ Categorie</button></div>
+  async function privCategorieen(view) {
+    const laad = () => privCategorieen(view);
+    let cats;
+    try { cats = await api('prive_categorieen'); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    view.innerHTML = pageHead('Categorieën', 'Groepeer je uitgaven en inkomsten.', `<button class="btn btn-brand" id="nieuwCat">+ Categorie</button>`) +
+      `<div class="help" style="margin-bottom:16px">Categorieën bepalen hoe je uitgaven en inkomsten worden gegroepeerd. Wijs ze toe bij Transacties; met "onthoud" leert de app ze automatisch toe te kennen bij een volgende import.</div>
         <div class="card"><table class="compact"><thead><tr><th>Categorie</th><th>Soort</th><th></th></tr></thead><tbody>
         ${cats.map((c) => `<tr><td style="color:var(--ink)">${esc(c.naam)}</td><td>${c.soort === 'inkomst' ? '<span class="suc">inkomst</span>' : '<span class="mut">uitgave</span>'}</td><td class="r"><button class="linkbtn" data-edit="${c.id}">bewerken</button> <button class="linkbtn del" data-del="${c.id}">✕</button></td></tr>`).join('')}
         </tbody></table></div>`;
-      document.getElementById('nieuwCat').onclick = () => openPriveCategorie(null, renderTab);
-      body.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveCategorie(cats.find((x) => x.id === Number(b.dataset.edit)), renderTab));
-      body.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Categorie verwijderen? Transacties blijven bestaan maar verliezen deze categorie.')) return; await api('prive_categorie_verwijder', { id: Number(b.dataset.del) }, 'POST'); renderTab(); });
-    }
-
-    shell();
+    document.getElementById('nieuwCat').onclick = () => openPriveCategorie(null, laad);
+    view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveCategorie(cats.find((x) => x.id === Number(b.dataset.edit)), laad));
+    view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Categorie verwijderen? Transacties blijven bestaan maar verliezen deze categorie.')) return; await api('prive_categorie_verwijder', { id: Number(b.dataset.del) }, 'POST'); laad(); });
   }
 
   function openPriveRekening(rek, refresh) {
@@ -1012,13 +1038,16 @@
           <label class="field"><span>Soort</span><select id="soort">${Object.entries(PRIVE_REK_SOORT).map(([v, l]) => `<option value="${v}" ${st.soort === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <label class="field"><span>IBAN (optioneel)</span><input id="iban" value="${esc(rek ? (rek.iban || '') : '')}" /></label>
         </div>
-        <label class="field"><span>Beginsaldo</span><input class="num" id="begin" value="${esc(rek ? rek.beginsaldo : '')}" placeholder="0,00" /></label>
-        <div class="mut" style="font-size:12px">Beginsaldo = het saldo vóór de eerste transactie die je importeert of invoert. Bij een bezitting (auto, beleggingen) zet je hier de waarde.</div>
+        <div class="row">
+          <label class="field"><span>Beginsaldo</span><input class="num" id="begin" value="${esc(rek ? rek.beginsaldo : '')}" placeholder="0,00" /></label>
+          <label class="field"><span>Jouw aandeel (%)</span><input class="num" id="aandeel" value="${esc(rek ? rek.aandeel : 100)}" placeholder="100" /></label>
+        </div>
+        <div class="mut" style="font-size:12px"><b>Beginsaldo</b> = het saldo vóór de eerste transactie die je importeert/invoert (bij een bezitting: de waarde). <b>Aandeel</b> = jouw deel bij een gedeelde rekening (bv. een gezamenlijke kinderrekening op <b>50</b>). Alleen jouw deel telt mee in je vermogen en uitgaven; je ziet wél alle transacties.</div>
       </div>
       <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Opslaan</button></div></div>`;
     ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
     ov.querySelector('#opslaan').onclick = async () => {
-      const body = { id: st.id, naam: ov.querySelector('#naam').value, soort: ov.querySelector('#soort').value, iban: ov.querySelector('#iban').value, beginsaldo: ov.querySelector('#begin').value };
+      const body = { id: st.id, naam: ov.querySelector('#naam').value, soort: ov.querySelector('#soort').value, iban: ov.querySelector('#iban').value, beginsaldo: ov.querySelector('#begin').value, aandeel: ov.querySelector('#aandeel').value };
       if (!body.naam.trim()) return toast('Naam is verplicht', 'error');
       try { await api('prive_rekening_opslaan', body, 'POST'); toast('Opgeslagen ✓'); close(); refresh(); } catch (e) { toast(e.message, 'error'); }
     };

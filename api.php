@@ -17,6 +17,7 @@ require __DIR__ . '/includes/bank.php';
 require __DIR__ . '/includes/deelnemingen.php';
 require __DIR__ . '/includes/ib.php';
 require __DIR__ . '/includes/prive.php';
+require __DIR__ . '/includes/csv_ing.php';
 
 set_exception_handler(function (Throwable $e): void {
     error_log('Boekhouding fout: ' . $e->getMessage());

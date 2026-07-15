@@ -17,8 +17,9 @@ function prive_rekeningen_lijst(): array {
     foreach ($rows as &$r) {
         $r['id'] = (int) $r['id'];
         $r['beginsaldo'] = (float) $r['beginsaldo'];
+        $r['aandeel'] = (float) ($r['aandeel'] ?? 100);
         $r['saldo'] = centen($r['beginsaldo'] + ($saldi[$r['id']] ?? 0));
-        $r['aantal'] = 0;
+        $r['aandeelSaldo'] = centen($r['saldo'] * $r['aandeel'] / 100);
     }
     return $rows;
 }
@@ -28,18 +29,21 @@ function prive_rekening_opslaan(array $in): array {
     if ($naam === '') json_response(['fout' => 'Naam is verplicht'], 422);
     $soort = (string) ($in['soort'] ?? 'bank');
     if (!in_array($soort, ['bank', 'spaar', 'contant', 'bezitting', 'overig'], true)) $soort = 'bank';
+    $aandeel = (float) str_replace(',', '.', (string) ($in['aandeel'] ?? 100));
+    if ($aandeel <= 0 || $aandeel > 100) $aandeel = 100;
     $data = [
         ':naam' => $naam,
         ':soort' => $soort,
         ':iban' => trim((string) ($in['iban'] ?? '')) ?: null,
         ':begin' => centen((float) str_replace(',', '.', (string) ($in['beginsaldo'] ?? 0))),
+        ':aandeel' => centen($aandeel),
     ];
     $id = (int) ($in['id'] ?? 0);
     if ($id > 0) {
         $data[':id'] = $id;
-        db()->prepare("UPDATE prive_rekeningen SET naam=:naam, soort=:soort, iban=:iban, beginsaldo=:begin WHERE id=:id")->execute($data);
+        db()->prepare("UPDATE prive_rekeningen SET naam=:naam, soort=:soort, iban=:iban, beginsaldo=:begin, aandeel=:aandeel WHERE id=:id")->execute($data);
     } else {
-        db()->prepare("INSERT INTO prive_rekeningen (naam, soort, iban, beginsaldo) VALUES (:naam,:soort,:iban,:begin)")->execute($data);
+        db()->prepare("INSERT INTO prive_rekeningen (naam, soort, iban, beginsaldo, aandeel) VALUES (:naam,:soort,:iban,:begin,:aandeel)")->execute($data);
         $id = (int) db()->lastInsertId();
     }
     return ['ok' => true, 'id' => $id];
@@ -172,15 +176,23 @@ function prive_transactie_verwijder(int $id): void {
     db()->prepare("DELETE FROM prive_transacties WHERE id = :id")->execute([':id' => $id]);
 }
 
-// --- Bankimport (MT940) ----------------------------------------------
+// --- Bankimport (MT940 of ING CSV) -----------------------------------
 function prive_bank_import(int $rekeningId, string $inhoud): array {
     require_once __DIR__ . '/mt940.php';
+    require_once __DIR__ . '/csv_ing.php';
     $q = db()->prepare("SELECT id FROM prive_rekeningen WHERE id = :id");
     $q->execute([':id' => $rekeningId]);
     if (!$q->fetch()) json_response(['fout' => 'Kies eerst een privérekening om op te importeren'], 422);
 
-    $p = mt940_parse($inhoud);
-    if (!$p['regels']) throw new RuntimeException('Geen bankregels gevonden — is dit een MT940 (.sta) bestand?');
+    // Formaat herkennen: ING CSV of MT940.
+    if (ing_csv_is($inhoud)) {
+        $p = ing_csv_parse($inhoud);
+        $formaat = 'ING CSV';
+    } else {
+        $p = mt940_parse($inhoud);
+        $formaat = 'MT940';
+    }
+    if (!$p['regels']) throw new RuntimeException('Geen bankregels gevonden — is dit een MT940 (.sta) of ING CSV bestand?');
 
     $ins = db()->prepare(
         "INSERT IGNORE INTO prive_transacties
@@ -203,7 +215,7 @@ function prive_bank_import(int $rekeningId, string $inhoud): array {
         if ($ins->rowCount() > 0) $geimp++; else $over++;
     }
     return ['geimporteerd' => $geimp, 'overgeslagen' => $over, 'totaal' => count($p['regels']),
-            'iban' => $p['iban'], 'eindsaldo' => $p['eindsaldo']];
+            'iban' => $p['iban'], 'eindsaldo' => $p['eindsaldo'], 'formaat' => $formaat];
 }
 
 // --- Te ontvangen / te betalen (register) ----------------------------
@@ -252,13 +264,16 @@ function prive_post_verwijder(int $id): void {
 function prive_overzicht(string $from, string $to): array {
     $rek = prive_rekeningen_lijst();
     $totRek = 0.0;
-    foreach ($rek as $r) $totRek += $r['saldo'];
+    foreach ($rek as $r) $totRek += $r['aandeelSaldo'];   // jouw aandeel per rekening
     $vord = (float) db()->query("SELECT COALESCE(SUM(bedrag),0) FROM prive_posten WHERE soort='vordering' AND status='open'")->fetchColumn();
     $schuld = (float) db()->query("SELECT COALESCE(SUM(bedrag),0) FROM prive_posten WHERE soort='schuld' AND status='open'")->fetchColumn();
 
+    // Bedragen wegen we naar het aandeel van de rekening (gedeelde rekening telt half).
     $q = db()->prepare(
-        "SELECT t.bedrag, c.naam AS cat, c.soort AS catsoort
-         FROM prive_transacties t LEFT JOIN prive_categorieen c ON c.id = t.categorie_id
+        "SELECT t.bedrag * r.aandeel / 100 AS bedrag, c.naam AS cat
+         FROM prive_transacties t
+         JOIN prive_rekeningen r ON r.id = t.rekening_id
+         LEFT JOIN prive_categorieen c ON c.id = t.categorie_id
          WHERE t.datum BETWEEN :f AND :t"
     );
     $q->execute([':f' => $from, ':t' => $to]);

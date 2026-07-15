@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS prive_rekeningen (
   soort         VARCHAR(20)  NOT NULL DEFAULT 'bank',   -- bank|spaar|contant|bezitting|overig
   iban          VARCHAR(40)  NULL,
   beginsaldo    DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+  aandeel       DECIMAL(5,2) NOT NULL DEFAULT 100.00,   -- jouw % (gedeelde rekening = bv. 50)
   volgorde      INT NOT NULL DEFAULT 0,
   aangemaakt_op DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)

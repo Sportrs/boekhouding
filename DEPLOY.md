@@ -93,6 +93,7 @@ opnieuw draaien kan geen kwaad.
 - `migraties/005_deelnemingen.sql` — tabel `deelnemingen` (zelf bij te houden register; boekwaarde uit de gekoppelde grootboekrekening).
 - `migraties/006_ib.sql` — tabel `ib_gegevens` (privé-inkomstenbelasting, invoer per jaar).
 - `migraties/007_prive.sql` — tabellen `prive_rekeningen`, `prive_transacties`, `prive_categorieen`, `prive_regels`, `prive_posten` (privéboekhouding: bankimport, categorieën, vermogen, te ontvangen/betalen).
+- `migraties/008_prive_aandeel.sql` — kolom `aandeel` op `prive_rekeningen` (voor gedeelde rekeningen, bv. 50%).
 
 ---
 
