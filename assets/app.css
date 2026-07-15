@@ -51,7 +51,10 @@ a { color: inherit; text-decoration: none; }
 .sidebar-foot button:hover { background: var(--surface2); color: var(--ink); }
 
 .main { flex: 1; overflow-y: auto; }
-.container { max-width: 1024px; margin: 0 auto; padding: 32px; }
+.container { max-width: 1160px; margin: 0 auto; padding: 32px; }
+
+/* Compacte tabel (minder celopvulling) voor brede tabellen met actieknoppen */
+.compact th, .compact td { padding-left: 10px; padding-right: 10px; }
 
 /* Koppen */
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 24px; }

@@ -387,8 +387,8 @@
           `<button class="btn btn-brand" id="mt940">MT940 importeren</button><input type="file" id="mt940file" accept=".sta,.txt,text/plain" style="display:none" />`) +
         `<div class="help" style="margin-bottom:16px"><b>Per bankregel kies je één actie:</b> <b>Boek</b> = maak een nieuwe boeking (factuur — upload de PDF, BTW wordt ingevuld). <b>Overboeking</b> = geen factuur maar een verschuiving (naar privé, BTW-betaling, tussen banken). <b>Negeer</b> = niet relevant. De blauwe <b>Koppel</b>-knop verschijnt alléén als er al een boeking met hetzelfde bedrag bestaat — dan koppel je die (zodat je niet dubbel boekt). Groen "gekoppeld" = klaar.</div>
         <div class="tabs" style="margin-bottom:16px;display:flex;gap:8px">${tabs.map((t) => `<button data-tab="${t}" class="${filter === t ? 'active' : ''}">${t}</button>`).join('')}</div>
-         <div class="card" style="margin-bottom:24px;overflow:hidden"><div style="overflow-x:auto"><table>
-           <thead><tr><th>Datum</th><th>Af/bij</th><th class="r">Bedrag</th><th>Tegenrekening</th><th>Omschrijving</th><th>Status</th><th></th></tr></thead>
+         <div class="card" style="margin-bottom:24px;overflow:hidden"><div style="overflow-x:auto"><table class="compact">
+           <thead><tr><th>Datum</th><th>Af/bij</th><th class="r" style="width:88px">Bedrag</th><th>Tegenrekening</th><th>Omschrijving</th><th>Status</th><th></th></tr></thead>
            <tbody>${rows}</tbody></table></div></div>
          <div class="card"><div class="card-head"><span>Leveranciers</span><button class="btn btn-brand" id="nieuweLev">+ Leverancier</button></div>
            <div class="mut" style="padding:12px 20px 0;font-size:12px;line-height:1.5">Leg vaste leveranciers vast met een <b style="color:var(--inkdim)">zoekterm</b> (bv. ANTHROPIC), hun land, het BTW-regime en een standaard kostenrekening. Een betaling in je bankafschrift wordt dan automatisch als die leverancier herkend, zodat "Boek" meteen de juiste kostenrekening en BTW invult — minder klikken, minder fouten.</div>
