@@ -170,6 +170,7 @@ function prive_transacties_lijst(array $f): array {
         $r['rekening_id'] = (int) $r['rekening_id'];
         $r['bedrag'] = (float) $r['bedrag'];
         $r['categorie_id'] = $r['categorie_id'] !== null ? (int) $r['categorie_id'] : null;
+        $r['koppel_id'] = $r['koppel_id'] !== null ? (int) $r['koppel_id'] : null;
         unset($r['ruw']);
     }
     return $rows;
@@ -215,7 +216,69 @@ function prive_transactie_categorie(int $id, ?int $categorieId, bool $onthoud): 
 }
 
 function prive_transactie_verwijder(int $id): void {
+    db()->prepare("UPDATE prive_transacties SET koppel_id = NULL WHERE koppel_id = :id")->execute([':id' => $id]);
     db()->prepare("DELETE FROM prive_transacties WHERE id = :id")->execute([':id' => $id]);
+}
+
+/* Zorg voor een neutrale categorie "Overboeking eigen rekening" en geef de id. */
+function prive_overboeking_categorie_id(): int {
+    db()->prepare("INSERT IGNORE INTO prive_categorieen (naam, soort) VALUES ('Overboeking eigen rekening','neutraal')")->execute();
+    return (int) db()->query("SELECT id FROM prive_categorieen WHERE naam = 'Overboeking eigen rekening'")->fetchColumn();
+}
+
+/* Nieuwe overboeking tussen twee eigen rekeningen: maakt beide kanten aan. */
+function prive_overboeking(array $in): array {
+    $van = (int) ($in['vanRekening'] ?? 0);
+    $naar = (int) ($in['naarRekening'] ?? 0);
+    if ($van <= 0 || $naar <= 0) json_response(['fout' => 'Kies een van- en naar-rekening'], 422);
+    if ($van === $naar) json_response(['fout' => 'Van- en naar-rekening moeten verschillen'], 422);
+    $datum = (string) ($in['datum'] ?? '');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $datum)) json_response(['fout' => 'Geldige datum is verplicht'], 422);
+    $bedrag = centen((float) str_replace(',', '.', (string) ($in['bedrag'] ?? 0)));
+    if ($bedrag <= 0) json_response(['fout' => 'Bedrag moet groter dan 0 zijn'], 422);
+    $namen = db()->prepare("SELECT id, naam FROM prive_rekeningen WHERE id IN (:a,:b)");
+    $namen->execute([':a' => $van, ':b' => $naar]);
+    $rk = [];
+    foreach ($namen->fetchAll() as $r) $rk[(int) $r['id']] = $r['naam'];
+    if (count($rk) !== 2) json_response(['fout' => 'Onbekende rekening'], 422);
+    $cat = prive_overboeking_categorie_id();
+    $oms = trim((string) ($in['omschrijving'] ?? '')) ?: 'Overboeking eigen rekening';
+
+    db()->beginTransaction();
+    $ins = db()->prepare("INSERT INTO prive_transacties (rekening_id, datum, bedrag, tegenrekening_naam, omschrijving, categorie_id) VALUES (:r,:d,:b,:tn,:o,:c)");
+    $ins->execute([':r' => $van, ':d' => $datum, ':b' => -$bedrag, ':tn' => $rk[$naar], ':o' => $oms, ':c' => $cat]);
+    $idA = (int) db()->lastInsertId();
+    $ins->execute([':r' => $naar, ':d' => $datum, ':b' => $bedrag, ':tn' => $rk[$van], ':o' => $oms, ':c' => $cat]);
+    $idB = (int) db()->lastInsertId();
+    db()->prepare("UPDATE prive_transacties SET koppel_id = :b WHERE id = :a")->execute([':a' => $idA, ':b' => $idB]);
+    db()->prepare("UPDATE prive_transacties SET koppel_id = :a WHERE id = :b")->execute([':a' => $idA, ':b' => $idB]);
+    db()->commit();
+    return ['ok' => true];
+}
+
+/* Koppel een bestaande (geïmporteerde) transactie aan een doelrekening:
+ * maakt de tegenboeking op die rekening (spiegelbedrag) en linkt beide. */
+function prive_transactie_koppel_rekening(int $txId, int $doelRekeningId): array {
+    $q = db()->prepare("SELECT * FROM prive_transacties WHERE id = :id");
+    $q->execute([':id' => $txId]);
+    $t = $q->fetch();
+    if (!$t) json_response(['fout' => 'Transactie niet gevonden'], 404);
+    if (!empty($t['koppel_id'])) json_response(['fout' => 'Deze transactie is al aan een rekening gekoppeld'], 422);
+    if ($doelRekeningId <= 0 || (int) $t['rekening_id'] === $doelRekeningId) json_response(['fout' => 'Kies een andere doelrekening'], 422);
+    $n = db()->prepare("SELECT naam FROM prive_rekeningen WHERE id = :id");
+    $n->execute([':id' => $doelRekeningId]);
+    if ($n->fetchColumn() === false) json_response(['fout' => 'Onbekende doelrekening'], 422);
+    $n->execute([':id' => $t['rekening_id']]);
+    $bronNaam = (string) $n->fetchColumn();
+    $cat = $t['categorie_id'] ?: prive_overboeking_categorie_id();
+
+    db()->beginTransaction();
+    $ins = db()->prepare("INSERT INTO prive_transacties (rekening_id, datum, bedrag, tegenrekening_naam, omschrijving, categorie_id, koppel_id) VALUES (:r,:d,:b,:tn,:o,:c,:k)");
+    $ins->execute([':r' => $doelRekeningId, ':d' => $t['datum'], ':b' => centen(-(float) $t['bedrag']), ':tn' => $bronNaam, ':o' => 'Overboeking van ' . $bronNaam, ':c' => $cat, ':k' => $txId]);
+    $mirror = (int) db()->lastInsertId();
+    db()->prepare("UPDATE prive_transacties SET koppel_id = :m WHERE id = :id")->execute([':m' => $mirror, ':id' => $txId]);
+    db()->commit();
+    return ['ok' => true];
 }
 
 // --- Bankimport (MT940 of ING CSV) -----------------------------------

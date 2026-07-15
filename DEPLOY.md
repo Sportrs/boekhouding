@@ -95,6 +95,7 @@ opnieuw draaien kan geen kwaad.
 - `migraties/007_prive.sql` — tabellen `prive_rekeningen`, `prive_transacties`, `prive_categorieen`, `prive_regels`, `prive_posten` (privéboekhouding: bankimport, categorieën, vermogen, te ontvangen/betalen).
 - `migraties/008_prive_aandeel.sql` — kolom `aandeel` op `prive_rekeningen` (voor gedeelde rekeningen, bv. 50%).
 - `migraties/009_prive_neutraal.sql` — neutrale (overboekings)categorieën; deze tellen niet mee als inkomst/uitgave.
+- `migraties/010_prive_koppel.sql` — kolom `koppel_id` op `prive_transacties` (overboekingen tussen eigen rekeningen: beide kanten gekoppeld).
 
 ---
 

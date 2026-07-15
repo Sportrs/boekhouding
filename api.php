@@ -392,6 +392,12 @@ switch ($actie) {
         prive_transactie_verwijder((int) ($in['id'] ?? 0));
         json_response(['ok' => true]);
 
+    case 'prive_overboeking':
+        json_response(prive_overboeking($in));
+
+    case 'prive_transactie_koppel_rekening':
+        json_response(prive_transactie_koppel_rekening((int) ($in['id'] ?? 0), (int) ($in['doelRekeningId'] ?? 0)));
+
     case 'prive_posten':
         json_response(prive_posten_lijst());
 

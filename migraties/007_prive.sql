@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS prive_transacties (
   tegenrekening_naam VARCHAR(180) NULL,
   omschrijving       VARCHAR(255) NULL,
   categorie_id       INT UNSIGNED NULL,
+  koppel_id          INT UNSIGNED NULL,          -- tegenboeking bij overboeking tussen eigen rekeningen
   hash               CHAR(40) NULL,
   ruw                TEXT NULL,
   aangemaakt_op      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

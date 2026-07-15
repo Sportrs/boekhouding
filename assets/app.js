@@ -1007,7 +1007,7 @@
       tx = await api('prive_transacties', { rekening: priveTxFilter.rekening, from: priveTxFilter.from, to: priveTxFilter.to, categorie: priveTxFilter.categorie, ongecategoriseerd: priveTxFilter.ongecategoriseerd ? 1 : '' });
     } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
     const catOpts = (sel) => '<option value="">—</option>' + cats.map((c) => `<option value="${c.id}" ${Number(sel) === c.id ? 'selected' : ''}>${esc(c.naam)}</option>`).join('');
-    view.innerHTML = pageHead('Transacties', 'Al je privéboekingen — wijs categorieën toe om je uitgaven te volgen.', `<button class="btn btn-brand" id="nieuwTx">+ Transactie</button>`) + `
+    view.innerHTML = pageHead('Transacties', 'Al je privéboekingen — wijs categorieën toe om je uitgaven te volgen.', `<button class="btn btn-ghost" id="nieuwOverboeking">+ Overboeking</button><button class="btn btn-brand" id="nieuwTx">+ Transactie</button>`) + `
       <div class="page-actions" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
         <select id="fRek" style="width:auto"><option value="">Alle rekeningen</option>${rek.map((r) => `<option value="${r.id}" ${String(priveTxFilter.rekening) === String(r.id) ? 'selected' : ''}>${esc(r.naam)}</option>`).join('')}</select>
         <select id="fCat" style="width:auto"><option value="">Alle categorieën</option><option value="__leeg" ${priveTxFilter.ongecategoriseerd ? 'selected' : ''}>— zonder categorie —</option>${cats.map((c) => `<option value="${c.id}" ${String(priveTxFilter.categorie) === String(c.id) ? 'selected' : ''}>${esc(c.naam)}</option>`).join('')}</select>
@@ -1022,7 +1022,7 @@
         <td title="${esc(t.omschrijving || '')}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
         <td><select data-txcat="${t.id}" style="min-width:150px">${catOpts(t.categorie_id)}</select></td>
         <td class="num ${t.bedrag >= 0 ? 'suc' : 'dan'}" style="font-weight:500">${euro(t.bedrag)}</td>
-        <td class="r" style="white-space:nowrap">${t.categorie_soort === 'neutraal' ? `<button class="linkbtn" data-post="${t.id}" title="Maak hier een vordering/schuld van (bv. RC-opname of lening)">→ post</button> ` : ''}<button class="linkbtn" data-edit="${t.id}">✎</button> <button class="linkbtn del" data-del="${t.id}">🗑</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">Geen transacties. Importeer een afschrift (Rekeningen) of voeg er handmatig een toe.</td></tr>'}
+        <td class="r" style="white-space:nowrap">${t.koppel_id ? '<span class="mut" title="Gekoppeld aan een eigen rekening">⇄</span> ' : (t.categorie_soort === 'neutraal' ? `<button class="linkbtn" data-rek="${t.id}" title="Boek de tegenkant op een eigen rekening (bv. contant of gezamenlijk)">→ rekening</button> <button class="linkbtn" data-post="${t.id}" title="Maak hier een vordering/schuld van (bv. RC-opname of lening)">→ post</button> ` : '')}<button class="linkbtn" data-edit="${t.id}">✎</button> <button class="linkbtn del" data-del="${t.id}">🗑</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">Geen transacties. Importeer een afschrift (Rekeningen) of voeg er handmatig een toe.</td></tr>'}
       </tbody></table></div></div>`;
     document.getElementById('fRek').onchange = (e) => { priveTxFilter.rekening = e.target.value; laad(); };
     document.getElementById('fCat').onchange = (e) => { const v = e.target.value; if (v === '__leeg') { priveTxFilter.ongecategoriseerd = true; priveTxFilter.categorie = ''; } else { priveTxFilter.ongecategoriseerd = false; priveTxFilter.categorie = v; } laad(); };
@@ -1030,6 +1030,8 @@
     document.getElementById('fTo').onchange = (e) => { priveTxFilter.to = e.target.value; laad(); };
     document.getElementById('onthoud').onchange = (e) => { priveTxFilter.onthoud = e.target.checked; };
     document.getElementById('nieuwTx').onclick = () => openPriveTransactie(null, rek, cats, laad);
+    document.getElementById('nieuwOverboeking').onclick = () => openPriveOverboeking(rek, laad);
+    view.querySelectorAll('[data-rek]').forEach((b) => b.onclick = () => openPriveKoppelRekening(tx.find((x) => x.id === Number(b.dataset.rek)), rek, laad));
     view.querySelectorAll('[data-txcat]').forEach((sel) => sel.onchange = async () => { try { await api('prive_transactie_categorie', { id: Number(sel.dataset.txcat), categorieId: Number(sel.value) || 0, onthoud: priveTxFilter.onthoud }, 'POST'); toast('Categorie opgeslagen'); } catch (e) { toast(e.message, 'error'); } });
     view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveTransactie(tx.find((x) => x.id === Number(b.dataset.edit)), rek, cats, laad));
     view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Transactie verwijderen?')) return; try { await api('prive_transactie_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Verwijderd'); laad(); } catch (e) { toast(e.message, 'error'); } });
@@ -1168,6 +1170,52 @@
       };
     }
     render();
+  }
+
+  function openPriveOverboeking(rek, refresh) {
+    if (rek.length < 2) { toast('Je hebt minimaal twee rekeningen nodig voor een overboeking', 'error'); return; }
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    const opt = (sel) => rek.map((r) => `<option value="${r.id}" ${sel === r.id ? 'selected' : ''}>${esc(r.naam)}</option>`).join('');
+    ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>Overboeking tussen eigen rekeningen</h2><button class="x">✕</button></div>
+      <div class="modal-body">
+        <div class="help">Verplaats geld tussen twee van je eigen rekeningen — bv. je maandbedrag naar de <b>gezamenlijke rekening</b>, of contant opnemen (van bank naar een <b>contant-pot</b>). Beide kanten worden geboekt; dit telt <b>niet</b> als inkomst/uitgave, alleen je saldo verschuift.</div>
+        <div class="row">
+          <label class="field"><span>Van rekening</span><select id="van">${opt(rek[0].id)}</select></label>
+          <label class="field"><span>Naar rekening</span><select id="naar">${opt(rek[1].id)}</select></label>
+        </div>
+        <div class="row">
+          <label class="field"><span>Bedrag</span><input class="num" id="bedrag" placeholder="0,00" /></label>
+          <label class="field"><span>Datum</span><input type="date" id="datum" value="${vandaag()}" /></label>
+        </div>
+        <label class="field"><span>Omschrijving</span><input id="oms" placeholder="bijv. maandbijdrage kinderen" /></label>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Boeken</button></div></div>`;
+    ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
+    ov.querySelector('#opslaan').onclick = async () => {
+      const body = { vanRekening: Number(ov.querySelector('#van').value), naarRekening: Number(ov.querySelector('#naar').value), bedrag: ov.querySelector('#bedrag').value, datum: ov.querySelector('#datum').value, omschrijving: ov.querySelector('#oms').value };
+      if (body.vanRekening === body.naarRekening) return toast('Kies twee verschillende rekeningen', 'error');
+      try { await api('prive_overboeking', body, 'POST'); toast('Overboeking geboekt ✓'); close(); refresh(); } catch (e) { toast(e.message, 'error'); }
+    };
+  }
+
+  function openPriveKoppelRekening(tx, rek, refresh) {
+    if (!tx) return;
+    const doelen = rek.filter((r) => r.id !== tx.rekening_id);
+    if (!doelen.length) { toast('Geen andere rekening beschikbaar — maak er eerst een aan', 'error'); return; }
+    const inkomend = tx.bedrag >= 0;
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>Tegenrekening kiezen</h2><button class="x">✕</button></div>
+      <div class="modal-body">
+        <div class="help">Deze overboeking van <b>${euro(Math.abs(tx.bedrag))}</b> (${datumNL(tx.datum)}) is de ene kant. Kies de <b>eigen rekening</b> die de tegenkant is — daar wordt automatisch <b>${inkomend ? '− ' : '+ '}${euro(Math.abs(tx.bedrag))}</b> geboekt, zodat beide saldo's kloppen. <b>Let op:</b> doe dit alleen als die rekening niet óók apart wordt geïmporteerd (bv. contant geld), anders boek je dubbel.</div>
+        <label class="field"><span>Tegenrekening</span><select id="doel">${doelen.map((r) => `<option value="${r.id}">${esc(r.naam)}</option>`).join('')}</select></label>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Koppelen</button></div></div>`;
+    ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
+    ov.querySelector('#opslaan').onclick = async () => {
+      try { await api('prive_transactie_koppel_rekening', { id: tx.id, doelRekeningId: Number(ov.querySelector('#doel').value) }, 'POST'); toast('Tegenkant geboekt ✓'); close(); refresh(); } catch (e) { toast(e.message, 'error'); }
+    };
   }
 
   function openPrivePost(post, refresh, prefill) {
@@ -1870,6 +1918,7 @@
     priveImport: { q: 'Hoe importeer ik mijn privé-bankafschrift?', a: 'Tabblad <b>Rekeningen</b> → maak een rekening aan (met beginsaldo) → klik <b>importeer</b> en kies je MT940 (<code>.sta</code>) bestand. Dubbele regels worden automatisch overgeslagen, dus je kunt elke maand veilig opnieuw importeren.' },
     priveCat: { q: 'Hoe zie ik waar mijn geld heen gaat?', a: 'Geef transacties een <b>categorie</b> (tabblad Transacties). Met "onthoud" aan krijgt dezelfde tegenpartij voortaan automatisch die categorie bij import. Op het <b>Overzicht</b> zie je je uitgaven per categorie.' },
     privePosten: { q: 'Hoe leg ik een lening of openstaand bedrag vast?', a: 'Tabblad <b>Te ontvangen / betalen</b>: voeg een <b>vordering</b> toe (geld dat je nog krijgt, bv. een lening die je gaf) of een <b>schuld</b> (geld dat je nog moet betalen). Open posten tellen mee in je vermogen; is het afgelost, zet je de post op afgehandeld.' },
+    priveOverboeking: { q: 'Ik zet geld over naar mijn gezamenlijke rekening of neem contant op — hoe boek ik dat?', a: 'Dat is een <b>overboeking tussen je eigen rekeningen</b>, geen uitgave. Twee manieren: <b>(1)</b> klik op <b>+ Overboeking</b> (tab Transacties) en kies van-/naar-rekening, bedrag en datum — beide kanten worden geboekt. <b>(2)</b> Staat de afschrijving al in je bankimport (bv. een pinopname)? Klik dan bij die transactie op <b>→ rekening</b> en kies de tegenrekening (bv. je contant-pot); het spiegelbedrag wordt daar automatisch bijgeboekt. Beide manieren tellen niet mee als inkomst/uitgave, maar je saldo klopt. Maak van je contante geld gewoon een rekening met soort <b>Contant</b>.' },
     priveNeutraal: { q: 'Een overboeking wordt als inkomst gezien terwijl het dat niet is — wat nu?', a: 'Sommige bijschrijvingen zijn geen echt inkomen: een overboeking van je <b>spaarrekening</b>, een opname uit een <b>bouwdepot</b>, een <b>RC-opname uit je BV</b>, of een <b>ontvangen/gegeven lening</b>. Geef die transacties een categorie met soort <b>Neutraal (overboeking)</b> (er staan er al een paar klaar). Dan tellen ze niet mee als inkomst of uitgave en vervuilen ze je overzicht niet — je banksaldo blijft wél kloppen. Maak er eventueel een <b>regel</b> voor (bv. zoekterm "bouwdepot"), dan gaat het voortaan vanzelf. Wil je dat het bedrag ook je <b>vermogen</b> corrigeert (bv. een RC-opname of ontvangen lening die je nog moet terugbetalen)? Klik dan bij zo\'n transactie op <b>→ post</b> om er in één klik een schuld/vordering van te maken.' },
   };
   const FAQ_PAGES = {
@@ -1881,7 +1930,7 @@
     grootboek: ['grootboekkaart', 'afschrijving', 'rcrente'],
     deelnemingen: ['deelnAfw', 'deelnNieuw'],
     ib: ['ibboxen', 'gebruikelijkloon', 'salarisdividend', 'ibtarieven'],
-    prive: ['priveVermogen', 'priveImport', 'priveCat', 'priveNeutraal', 'privePosten'],
+    prive: ['priveVermogen', 'priveImport', 'priveOverboeking', 'priveCat', 'priveNeutraal', 'privePosten'],
   };
   function faqBlock(pageKey) {
     const keys = FAQ_PAGES[pageKey] || [];
