@@ -233,6 +233,10 @@ function import_jaarrekening_commit(array $in): array {
 
     db()->commit();
 
+    // Seed het (zelf beheerde) deelnemingenregister; bestaande regels blijven staan.
+    require_once __DIR__ . '/deelnemingen.php';
+    deelnemingen_seed($deeln);
+
     if (isset($in['compensabeleVerliezen'])) bh_instelling_zet('compensabeleVerliezen', (string) $num($in['compensabeleVerliezen']));
     if (($in['bedrijfsnaam'] ?? '') !== '' && bh_instelling('bedrijfsnaam', '') === '') bh_instelling_zet('bedrijfsnaam', (string) $in['bedrijfsnaam']);
 

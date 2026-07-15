@@ -108,6 +108,7 @@
     { hash: '#/bank', label: 'Bank', ic: '⇄', page: pageBank },
     { hash: '#/btw', label: 'BTW-aangifte', ic: '％', page: pageBTW },
     { hash: '#/jaarverslag', label: 'Jaarverslag', ic: '▦', page: pageJaarverslag },
+    { hash: '#/deelnemingen', label: 'Deelnemingen', ic: '◈', page: pageDeelnemingen },
     { hash: '#/import', label: 'Import', ic: '⇪', page: pageImport },
     { hash: '#/instellingen', label: 'Instellingen', ic: '⚙', page: pageInstellingen },
   ];
@@ -522,7 +523,7 @@
       const deeln = toelichtingen.filter((r) => r.soort === 'deelneming');
 
       if (deeln.length) {
-        toelichtingHtml += `<div class="card" style="margin-bottom:24px"><div class="card-head">Deelnemingen</div><div class="card-body" style="display:grid;gap:18px">` +
+        toelichtingHtml += `<div class="card" style="margin-bottom:24px"><div class="card-head">Deelnemingen — verloop uit geïmporteerde jaarrekening <span class="mut" style="font-weight:400">(actueel register: tab Deelnemingen)</span></div><div class="card-body" style="display:grid;gap:18px">` +
           [...groep(deeln)].map(([post, rows]) => {
             const aandeel = (rows.find((r) => r.label === 'Aandeel') || {}).tekst || '';
             const status = (rows.find((r) => r.label === 'Status') || {}).tekst || '';
@@ -592,6 +593,103 @@
       </div>`;
     document.getElementById('print').addEventListener('click', () => window.print());
     view.querySelectorAll('[data-kaart]').forEach((el) => el.addEventListener('click', () => openKaart(el.dataset.kaart)));
+  }
+
+  // ---------------- Pagina: Deelnemingen ----------------
+  const DEELN_STATUS = { actief: ['Actief', 'suc'], opgeheven: ['Opgeheven', 'mut'], failliet: ['Failliet', 'dan'], verkocht: ['Verkocht', 'mut'] };
+  async function pageDeelnemingen(view) {
+    let lijst;
+    try { lijst = await api('deelnemingen'); await loadAccounts(); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    const laad = () => pageDeelnemingen(view);
+
+    const rows = lijst.length ? lijst.map((d) => {
+      const [lab, cls] = DEELN_STATUS[d.status] || ['Actief', 'suc'];
+      const periode = [d.opgericht, d.beeindigd].filter(Boolean).join(' – ') || (d.opgericht ? d.opgericht + ' –' : '');
+      const bw = d.boekwaarde !== null ? euro0(d.boekwaarde) : '<span class="mut">—</span>';
+      const rek = d.rekeningnummer ? `<span class="klik" data-kaart="${esc(d.rekeningnummer)}" title="Klik voor verloop">${esc(d.rekeningnummer)}</span>` : '<span class="mut">niet gekoppeld</span>';
+      const kanAfwaarderen = d.rekeningnummer && d.boekwaarde !== null && Math.abs(d.boekwaarde) > 0.005;
+      return `<tr>
+        <td><div style="color:var(--ink)">${esc(d.naam)}</div>${d.toelichting ? `<div class="mut" style="font-size:12px">${esc(d.toelichting)}</div>` : ''}</td>
+        <td>${esc(d.aandeel || '')}${d.land ? ` <span class="mut">${esc(d.land)}</span>` : ''}</td>
+        <td><span class="${cls}">${lab}</span>${periode ? `<div class="mut" style="font-size:12px">${esc(periode)}</div>` : ''}</td>
+        <td>${rek}</td>
+        <td class="num" style="color:var(--ink)">${bw}</td>
+        <td class="r" style="white-space:nowrap">
+          ${kanAfwaarderen ? `<button class="linkbtn" data-afw="${d.id}" title="Boek de boekwaarde af naar 0 (memoriaal)">afwaarderen</button> ` : ''}
+          <button class="linkbtn" data-edit="${d.id}">bewerken</button>
+          <button class="linkbtn del" data-del="${d.id}" title="Alleen uit het register; boekingen blijven staan">✕</button>
+        </td></tr>`;
+    }).join('') : `<tr><td colspan="6" class="empty">Nog geen deelnemingen. Voeg er een toe of importeer een jaarrekening.</td></tr>`;
+
+    view.innerHTML = pageHead('Deelnemingen', 'Register van je deelnemingen/participaties — zelf bij te houden.',
+      `<button class="btn btn-brand" id="nieuw">+ Deelneming</button>`) +
+      `<div class="help" style="margin-bottom:16px">Dit register houdt je deelnemingen bij (aandeel, status, opgericht/beëindigd). De <b>boekwaarde</b> komt live uit de gekoppelde grootboekrekening — klik op het rekeningnummer voor het verloop. Verandert er iets (bijv. een deelneming wordt <b>opgeheven of failliet</b>): zet de status om én klik <b>afwaarderen</b> om de boekwaarde als verlies naar 0 te boeken. Verwijderen haalt alleen de registerregel weg; je boekingen blijven staan.</div>
+      <div class="card"><table>
+        <thead><tr><th>Deelneming</th><th>Aandeel</th><th>Status</th><th>Grootboek</th><th class="r">Boekwaarde</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>`;
+
+    document.getElementById('nieuw').onclick = () => openDeelneming(null, laad);
+    view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openDeelneming(lijst.find((d) => d.id === Number(b.dataset.edit)), laad));
+    view.querySelectorAll('[data-kaart]').forEach((el) => el.addEventListener('click', () => openKaart(el.dataset.kaart)));
+    view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('Deze deelneming uit het register verwijderen? (Boekingen blijven staan.)')) return;
+      try { await api('deelneming_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Verwijderd'); laad(); } catch (e) { toast(e.message, 'error'); }
+    });
+    view.querySelectorAll('[data-afw]').forEach((b) => b.onclick = () => {
+      const d = lijst.find((x) => x.id === Number(b.dataset.afw));
+      if (!d) return;
+      const bedrag = round2(Math.abs(d.boekwaarde));
+      // Zoek een passende verlies-/kostenrekening voor de afwaardering.
+      const kosten = state.accounts.filter((a) => a.type === 'kosten');
+      const suggestie = (kosten.find((a) => /waardevermin|afwaard|resultaat deelnem|bijzondere waarde/i.test(a.naam)) || {}).nummer || '';
+      const hint = `Je waardeert <b>${esc(d.naam)}</b> af. De boekwaarde (${euro(bedrag)}) op grootboek ${esc(d.rekeningnummer)} gaat naar <b>0</b>: het bedrag komt als <b>verlies</b> op een kosten-/verliesrekening (Debet) en de deelneming (Credit) wordt afgeboekt. ${suggestie ? '' : '<b>Let op:</b> je hebt nog geen aparte verliesrekening — maak er evt. één aan (type kosten, bv. "Waardevermindering deelnemingen") of kies een bestaande.'} Zet daarna de status op ‘opgeheven’ of ‘failliet’.`;
+      openMemoriaal(laad, {
+        hint,
+        initial: {
+          datum: (state.settings && state.settings.boekjaar ? state.settings.boekjaar : String(new Date().getFullYear())) + '-12-31',
+          omschrijving: 'Afwaardering deelneming ' + d.naam,
+          regels: [{ rekening: suggestie, debet: bedrag, credit: 0 }, { rekening: d.rekeningnummer, debet: 0, credit: bedrag }],
+        },
+      });
+    });
+  }
+
+  function openDeelneming(d, refresh) {
+    const st = { id: d ? d.id : 0, status: d ? d.status : 'actief', rekeningnummer: d ? (d.rekeningnummer || '') : '' };
+    const activa = state.accounts.filter((a) => a.type === 'actief');
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>${d ? 'Deelneming bewerken' : 'Nieuwe deelneming'}</h2><button class="x">✕</button></div>
+      <div class="modal-body">
+        <div class="help">Leg vast wat de BV bezit in een andere onderneming. Koppel eventueel de <b>grootboekrekening</b> (financiële vaste activa) waarop de deelneming staat — dan zie je hier de live boekwaarde. Aankoop, resultaat en afwaardering boek je als memoriaal.</div>
+        <label class="field"><span>Naam</span><input id="naam" value="${esc(d ? d.naam : '')}" placeholder="bijv. ClubCows B.V." /></label>
+        <div class="row">
+          <label class="field"><span>Aandeel</span><input id="aandeel" value="${esc(d ? (d.aandeel || '') : '')}" placeholder="bijv. 100% of 25%" /></label>
+          <label class="field"><span>Land</span><input id="land" value="${esc(d ? (d.land || '') : '')}" placeholder="NL" /></label>
+        </div>
+        <div class="row">
+          <label class="field"><span>Status</span><select id="status">${Object.entries(DEELN_STATUS).map(([v, [l]]) => `<option value="${v}" ${st.status === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field"><span>Grootboekrekening</span><select id="rek"><option value="">— geen —</option>${activa.map((a) => `<option value="${esc(a.nummer)}" ${st.rekeningnummer === a.nummer ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('')}</select></label>
+        </div>
+        <div class="row">
+          <label class="field"><span>Opgericht (jaar)</span><input id="opgericht" value="${esc(d && d.opgericht ? d.opgericht : '')}" placeholder="2023" /></label>
+          <label class="field"><span>Beëindigd (jaar)</span><input id="beeindigd" value="${esc(d && d.beeindigd ? d.beeindigd : '')}" placeholder="leeg = nog actief" /></label>
+        </div>
+        <label class="field"><span>Toelichting</span><input id="toel" value="${esc(d ? (d.toelichting || '') : '')}" placeholder="bijv. in 2026 opgeheven" /></label>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Opslaan</button></div></div>`;
+    ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
+    ov.querySelector('#opslaan').onclick = async () => {
+      const body = {
+        id: st.id, naam: ov.querySelector('#naam').value, aandeel: ov.querySelector('#aandeel').value,
+        land: ov.querySelector('#land').value, status: ov.querySelector('#status').value,
+        rekeningnummer: ov.querySelector('#rek').value, opgericht: ov.querySelector('#opgericht').value,
+        beeindigd: ov.querySelector('#beeindigd').value, toelichting: ov.querySelector('#toel').value,
+      };
+      if (!body.naam.trim()) return toast('Naam is verplicht', 'error');
+      try { await api('deelneming_opslaan', body, 'POST'); toast('Opgeslagen ✓'); close(); refresh(); } catch (e) { toast(e.message, 'error'); }
+    };
   }
 
   // ---------------- Pagina: Instellingen ----------------

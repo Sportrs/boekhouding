@@ -14,6 +14,7 @@ require __DIR__ . '/includes/boekhouding.php';
 require __DIR__ . '/includes/ai.php';
 require __DIR__ . '/includes/import.php';
 require __DIR__ . '/includes/bank.php';
+require __DIR__ . '/includes/deelnemingen.php';
 
 set_exception_handler(function (Throwable $e): void {
     error_log('Boekhouding fout: ' . $e->getMessage());
@@ -312,6 +313,17 @@ switch ($actie) {
 
     case 'leverancier_verwijder':
         leverancier_verwijder((int) ($in['id'] ?? 0));
+        json_response(['ok' => true]);
+
+    // ---------------- Deelnemingen ----------------
+    case 'deelnemingen':
+        json_response(deelnemingen_lijst());
+
+    case 'deelneming_opslaan':
+        json_response(deelneming_opslaan($in));
+
+    case 'deelneming_verwijder':
+        deelneming_verwijder((int) ($in['id'] ?? 0));
         json_response(['ok' => true]);
 
     case 'grootboekkaart': {
