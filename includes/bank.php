@@ -54,11 +54,18 @@ function bank_match_leverancier(string $naam, string $oms, string $iban): ?array
     return null;
 }
 
-// --- MT940 import ----------------------------------------------------
+// --- Bankimport (MT940 of ING CSV) -----------------------------------
 function bank_importeer(string $inhoud): array {
     require_once __DIR__ . '/mt940.php';
-    $p = mt940_parse($inhoud);
-    if (!$p['regels']) throw new RuntimeException('Geen bankregels gevonden — is dit een MT940 (.sta) bestand?');
+    require_once __DIR__ . '/csv_ing.php';
+    if (ing_csv_is($inhoud)) {
+        $p = ing_csv_parse($inhoud);
+        $formaat = 'ING CSV';
+    } else {
+        $p = mt940_parse($inhoud);
+        $formaat = 'MT940';
+    }
+    if (!$p['regels']) throw new RuntimeException('Geen bankregels gevonden — is dit een MT940 (.sta) of ING CSV bestand?');
 
     $ins = db()->prepare(
         "INSERT IGNORE INTO banktransacties
@@ -85,6 +92,7 @@ function bank_importeer(string $inhoud): array {
     return [
         'geimporteerd' => $geimp, 'overgeslagen' => $over, 'totaal' => count($p['regels']),
         'iban' => $p['iban'], 'beginsaldo' => $p['beginsaldo'], 'eindsaldo' => $p['eindsaldo'],
+        'formaat' => $formaat,
     ];
 }
 

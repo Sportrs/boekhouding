@@ -422,8 +422,8 @@
         : `<tr><td colspan="6" class="empty">Nog geen leveranciers.</td></tr>`;
 
       view.innerHTML =
-        pageHead('Bank', 'Importeer je MT940-afschrift en letter betalingen af tegen boekingen.',
-          `<button class="btn btn-brand" id="mt940">MT940 importeren</button><input type="file" id="mt940file" accept=".sta,.txt,text/plain" style="display:none" />`) +
+        pageHead('Bank', 'Importeer je bankafschrift (MT940 of ING CSV) en letter betalingen af tegen boekingen.',
+          `<button class="btn btn-brand" id="mt940">Afschrift importeren</button><input type="file" id="mt940file" accept=".sta,.csv,.txt,text/plain" style="display:none" />`) +
         `<div class="help" style="margin-bottom:16px"><b>Per bankregel kies je één actie:</b> <b>Boek</b> = maak een nieuwe boeking (factuur — upload de PDF, BTW wordt ingevuld). <b>Overboeking</b> = geen factuur maar een verschuiving (naar privé, BTW-betaling, tussen banken). <b>Negeer</b> = niet relevant. De blauwe <b>Koppel</b>-knop verschijnt alléén als er al een boeking met hetzelfde bedrag bestaat — dan koppel je die (zodat je niet dubbel boekt). Groen "gekoppeld" = klaar.</div>
         <div class="tabs" style="margin-bottom:16px;display:flex;gap:8px">${tabs.map((t) => `<button data-tab="${t}" class="${filter === t ? 'active' : ''}">${t}</button>`).join('')}</div>
          <div class="card" style="margin-bottom:24px;overflow:hidden"><div style="overflow-x:auto"><table class="compact">
@@ -438,7 +438,7 @@
       document.getElementById('mt940').onclick = () => fileEl.click();
       fileEl.onchange = async () => {
         const file = fileEl.files[0]; if (!file) return;
-        try { const tekst = await file.text(); const r = await api('bank_import', { bestand: tekst }, 'POST'); toast(`${r.geimporteerd} geïmporteerd, ${r.overgeslagen} overgeslagen`); laad(); }
+        try { const tekst = await file.text(); const r = await api('bank_import', { bestand: tekst }, 'POST'); const m = importMelding(r); toast(m.tekst, m.type); laad(); }
         catch (e) { toast(e.message, 'error'); } finally { fileEl.value = ''; }
       };
       view.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => { filter = b.dataset.tab; laad(); });
@@ -903,6 +903,7 @@
   // ---------------- Pagina: Privé (persoonlijke boekhouding) ----------------
   const PRIVE_REK_SOORT = { bank: 'Betaalrekening', spaar: 'Spaarrekening', contant: 'Contant', bezitting: 'Bezitting', overig: 'Overig' };
   let priveJaar = new Date().getFullYear();
+  let priveMaandModus = 'jaar';
   const priveTxFilter = { rekening: '', from: '', to: '', categorie: '', ongecategoriseerd: false, onthoud: true };
 
   async function privOverzicht(view) {
@@ -937,13 +938,31 @@
 
   async function privMaand(view) {
     const laad = () => privMaand(view);
-    let d;
-    try { d = await api('prive_maandcijfers', { jaar: priveJaar }); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    let d, dPrev = null;
+    try {
+      d = await api('prive_maandcijfers', { jaar: priveJaar });
+      if (priveMaandModus === 'jaar') dPrev = await api('prive_maandcijfers', { jaar: priveJaar - 1 });
+    } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
     const M = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
     const cel = (v) => `<td class="num ${v < 0 ? 'dan' : v > 0 ? 'suc' : 'mut'}">${v ? euro0(v) : '·'}</td>`;
     const rij = (naam, arr, totaal, cls) => `<tr><td style="${cls || ''}white-space:nowrap">${naam}</td>${arr.map(cel).join('')}<td class="num" style="font-weight:600;color:var(--ink)">${totaal ? euro0(totaal) : '·'}</td></tr>`;
+
+    let series;
+    if (priveMaandModus === 'jaar') {
+      series = [{ naam: priveJaar + ' uitgaven', kleur: CHART_KLEUREN[0], waarden: d.uitgavenPerMaand.map((v) => Math.abs(v)) }];
+      if (dPrev) series.push({ naam: (priveJaar - 1) + ' uitgaven', kleur: '#94a3b8', waarden: dPrev.uitgavenPerMaand.map((v) => Math.abs(v)) });
+    } else {
+      series = d.categorieen.filter((c) => c.totaal < 0).slice(0, 6).map((c, i) => ({ naam: c.naam, kleur: CHART_KLEUREN[i % CHART_KLEUREN.length], waarden: c.perMaand.map((v) => Math.abs(v)) }));
+    }
+    const heeftData = series.some((s) => s.waarden.some((v) => v > 0));
+
     view.innerHTML = pageHead('Per maand', 'Vergelijk je uitgaven en inkomsten maand voor maand.') + `
-      <div class="page-actions" style="margin-bottom:12px"><label class="mut" style="font-size:13px">Jaar:</label> <input type="number" id="pjaar" value="${priveJaar}" style="width:96px" /></div>
+      <div class="page-actions" style="margin-bottom:16px;gap:12px;flex-wrap:wrap">
+        <div class="tabs" style="display:flex;gap:8px"><button data-mm="jaar" class="${priveMaandModus === 'jaar' ? 'active' : ''}">Jaar-op-jaar</button><button data-mm="cat" class="${priveMaandModus === 'cat' ? 'active' : ''}">Per categorie</button></div>
+        <label class="mut" style="font-size:13px;display:flex;align-items:center;gap:6px">Jaar: <input type="number" id="pjaar" value="${priveJaar}" style="width:96px" /></label>
+      </div>
+      <div class="card" style="margin-bottom:16px"><div class="card-head">${priveMaandModus === 'jaar' ? 'Uitgaven per maand — ' + priveJaar + ' vs ' + (priveJaar - 1) : 'Uitgaven per categorie — ' + priveJaar}</div>
+        <div class="card-body">${heeftData ? lineChart(series) : '<div class="mut">Geen uitgaven in deze periode.</div>'}</div></div>
       <div class="card" style="overflow:hidden"><div style="overflow-x:auto"><table class="compact">
         <thead><tr><th>Categorie</th>${M.map((m) => `<th class="r">${m}</th>`).join('')}<th class="r">Totaal</th></tr></thead>
         <tbody>
@@ -956,6 +975,7 @@
         </tfoot>
       </table></div></div>
       <div class="mut" style="font-size:12px;margin-top:10px">Bedragen zijn gewogen naar het aandeel van de rekening (een gedeelde rekening telt voor jouw deel). <span class="dan">Rood</span> = uitgave, <span class="suc">groen</span> = inkomst.</div>`;
+    view.querySelectorAll('[data-mm]').forEach((b) => b.onclick = () => { priveMaandModus = b.dataset.mm; laad(); });
     document.getElementById('pjaar').onchange = (e) => { const j = Number(e.target.value); if (j >= 2000 && j <= 2100) { priveJaar = j; laad(); } };
   }
 
@@ -964,7 +984,7 @@
     let rek;
     try { rek = await api('prive_rekeningen'); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
     view.innerHTML = pageHead('Rekeningen', 'Je privérekeningen, saldo en bankimport.', `<button class="btn btn-brand" id="nieuwRek">+ Rekening</button>`) +
-      `<div class="help" style="margin-bottom:16px">Maak per rekening een regel aan (met <b>beginsaldo</b>) en klik <b>importeer</b> voor je afschrift — <b>ING CSV</b> (<code>.csv</code>) of <b>MT940</b> (<code>.sta</code>, o.a. bunq) worden automatisch herkend. Ook bezittingen (auto, beleggingen) kun je als rekening toevoegen. Bij een <b>gedeelde rekening</b> zet je je <b>aandeel</b> (bv. 50%) — dan telt alleen jouw deel mee in je vermogen en uitgaven.</div>
+      `<div class="help" style="margin-bottom:16px">Maak per rekening een regel aan (met <b>beginsaldo</b>) en klik <b>importeer</b> voor je afschrift — <b>ING CSV</b> (<code>.csv</code>) of <b>MT940</b> (<code>.sta</code>, o.a. bunq) worden automatisch herkend. Er worden <b>alleen nieuwe betalingen</b> toegevoegd; dubbele (bij een zelfde of overlappend bestand) worden automatisch genegeerd. Ook bezittingen (auto, beleggingen) kun je als rekening toevoegen. Bij een <b>gedeelde rekening</b> zet je je <b>aandeel</b> (bv. 50%) — dan telt alleen jouw deel mee in je vermogen en uitgaven.</div>
         <div class="card"><table class="compact"><thead><tr><th>Naam</th><th>Soort</th><th>IBAN</th><th class="r">Aandeel</th><th class="r">Saldo</th><th></th></tr></thead><tbody>
         ${rek.length ? rek.map((r) => `<tr><td style="color:var(--ink)">${esc(r.naam)}</td><td>${PRIVE_REK_SOORT[r.soort] || r.soort}</td><td class="mut">${esc(r.iban || '')}</td><td class="num">${r.aandeel}%</td><td class="num" style="color:var(--ink)">${euro(r.saldo)}${r.aandeel < 100 ? `<div class="mut" style="font-size:11px">jouw deel ${euro(r.aandeelSaldo)}</div>` : ''}</td>
           <td class="r" style="white-space:nowrap">${(r.soort === 'bank' || r.soort === 'spaar') ? `<button class="btn btn-success" data-imp="${r.id}" style="padding:4px 10px">importeer</button> ` : ''}<button class="linkbtn" data-edit="${r.id}">bewerken</button> <button class="linkbtn del" data-del="${r.id}">✕</button></td></tr>`).join('') : '<tr><td colspan="6" class="empty">Nog geen rekeningen.</td></tr>'}
@@ -975,7 +995,7 @@
     view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Rekening én alle bijbehorende transacties verwijderen?')) return; try { await api('prive_rekening_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Verwijderd'); laad(); } catch (e) { toast(e.message, 'error'); } });
     const mtfile = document.getElementById('mtfile'); let impRek = 0;
     view.querySelectorAll('[data-imp]').forEach((b) => b.onclick = () => { impRek = Number(b.dataset.imp); mtfile.click(); });
-    mtfile.onchange = async () => { const f = mtfile.files[0]; if (!f) return; try { const tekst = await f.text(); const r = await api('prive_bank_import', { rekeningId: impRek, bestand: tekst }, 'POST'); toast(`${r.geimporteerd} geïmporteerd (${r.formaat}), ${r.overgeslagen} overgeslagen`); laad(); } catch (e) { toast(e.message, 'error'); } finally { mtfile.value = ''; } };
+    mtfile.onchange = async () => { const f = mtfile.files[0]; if (!f) return; try { const tekst = await f.text(); const r = await api('prive_bank_import', { rekeningId: impRek, bestand: tekst }, 'POST'); const m = importMelding(r); toast(m.tekst, m.type); laad(); } catch (e) { toast(e.message, 'error'); } finally { mtfile.value = ''; } };
   }
 
   async function privTransacties(view) {
@@ -1777,6 +1797,35 @@
   // ---------------- Kleine HTML-helpers ----------------
   function pageHead(title, sub, actions) {
     return `<div class="page-head"><div><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${actions ? `<div class="page-actions">${actions}</div>` : ''}</div>`;
+  }
+
+  // Duidelijke melding na een bankimport: alleen nieuwe regels tellen, dubbele worden genegeerd.
+  function importMelding(r) {
+    const t = r.totaal != null ? r.totaal : (r.geimporteerd + r.overgeslagen);
+    const fmt = r.formaat ? ' (' + r.formaat + ')' : '';
+    if (r.geimporteerd === 0) return { tekst: `Niets nieuws${fmt} — alle ${t} betalingen waren al geïmporteerd.`, type: 'info' };
+    if (!r.overgeslagen) return { tekst: `${r.geimporteerd} betalingen geïmporteerd${fmt}.`, type: 'success' };
+    return { tekst: `${r.geimporteerd} van ${t} betalingen geïmporteerd${fmt} — ${r.overgeslagen} al aanwezig, genegeerd.`, type: 'success' };
+  }
+
+  const CHART_KLEUREN = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6'];
+
+  // Zelfgemaakte SVG-lijngrafiek (geen externe libs). series: [{naam, kleur, waarden:[12]}]
+  function lineChart(series) {
+    const W = 680, H = 210, padL = 52, padR = 14, padT = 12, padB = 26;
+    const months = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+    const max = Math.max(1, ...series.flatMap((s) => s.waarden.map((v) => Math.abs(v))));
+    const X = (i) => padL + (W - padL - padR) * (i / 11);
+    const Y = (v) => padT + (H - padT - padB) * (1 - Math.abs(v) / max);
+    const grid = [0, 0.5, 1].map((f) => { const yy = padT + (H - padT - padB) * (1 - f); return `<line x1="${padL}" y1="${yy.toFixed(1)}" x2="${W - padR}" y2="${yy.toFixed(1)}" stroke="var(--line)"/><text x="${padL - 8}" y="${(yy + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--muted)">${euro0(max * f)}</text>`; }).join('');
+    const xlabels = months.map((m, i) => `<text x="${X(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--muted)">${m}</text>`).join('');
+    const lines = series.map((s) => {
+      const pts = s.waarden.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ');
+      const dots = s.waarden.map((v, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="2.5" fill="${s.kleur}"/>`).join('');
+      return `<polyline points="${pts}" fill="none" stroke="${s.kleur}" stroke-width="2"/>${dots}`;
+    }).join('');
+    const legend = series.map((s) => `<span style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;font-size:12px;color:var(--inkdim)"><span style="width:14px;height:3px;background:${s.kleur};display:inline-block;border-radius:2px"></span>${esc(s.naam)}</span>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${grid}${xlabels}${lines}</svg><div style="margin-top:10px">${legend}</div>`;
   }
 
   // ---------------- FAQ "Hoe boek ik…" ----------------
