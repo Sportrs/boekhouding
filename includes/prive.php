@@ -161,6 +161,7 @@ function prive_transacties_lijst(array $f): array {
     if (!empty($f['to']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $f['to'])) { $sql .= " AND t.datum <= :to"; $p[':to'] = $f['to']; }
     if (!empty($f['categorie'])) { $sql .= " AND t.categorie_id = :cat"; $p[':cat'] = (int) $f['categorie']; }
     if (!empty($f['ongecategoriseerd'])) { $sql .= " AND t.categorie_id IS NULL"; }
+    if (!empty($f['gecategoriseerd'])) { $sql .= " AND t.categorie_id IS NOT NULL"; }
     $sql .= " ORDER BY t.datum DESC, t.id DESC LIMIT 1000";
     $q = db()->prepare($sql);
     $q->execute($p);
@@ -174,6 +175,13 @@ function prive_transacties_lijst(array $f): array {
         unset($r['ruw']);
     }
     return $rows;
+}
+
+/* Aantallen voor de tabs: alles / zonder categorie / met categorie. */
+function prive_transacties_tellingen(): array {
+    $tot = (int) db()->query("SELECT COUNT(*) FROM prive_transacties")->fetchColumn();
+    $onc = (int) db()->query("SELECT COUNT(*) FROM prive_transacties WHERE categorie_id IS NULL")->fetchColumn();
+    return ['alle' => $tot, 'ongecat' => $onc, 'gecat' => $tot - $onc];
 }
 
 function prive_transactie_opslaan(array $in): array {

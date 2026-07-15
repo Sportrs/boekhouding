@@ -905,7 +905,8 @@
   const PRIVE_CAT_SOORT = { inkomst: '<span class="suc">inkomst</span>', uitgave: '<span class="mut">uitgave</span>', neutraal: '<span class="warn">neutraal (overboeking)</span>' };
   let priveJaar = new Date().getFullYear();
   let priveMaandModus = 'jaar';
-  const priveTxFilter = { rekening: '', from: '', to: '', categorie: '', ongecategoriseerd: false, onthoud: true };
+  let priveTxTab = 'alle';
+  const priveTxFilter = { rekening: '', from: '', to: '', categorie: '', onthoud: true };
 
   async function privOverzicht(view) {
     const laad = () => privOverzicht(view);
@@ -1001,16 +1002,22 @@
 
   async function privTransacties(view) {
     const laad = () => privTransacties(view);
-    let rek, cats, tx;
+    let rek, cats, tel, tx;
     try {
-      [rek, cats] = await Promise.all([api('prive_rekeningen'), api('prive_categorieen')]);
-      tx = await api('prive_transacties', { rekening: priveTxFilter.rekening, from: priveTxFilter.from, to: priveTxFilter.to, categorie: priveTxFilter.categorie, ongecategoriseerd: priveTxFilter.ongecategoriseerd ? 1 : '' });
+      [rek, cats, tel] = await Promise.all([api('prive_rekeningen'), api('prive_categorieen'), api('prive_transacties_tellingen')]);
+      const f = { rekening: priveTxFilter.rekening, from: priveTxFilter.from, to: priveTxFilter.to };
+      if (priveTxFilter.categorie) f.categorie = priveTxFilter.categorie;
+      else if (priveTxTab === 'ongecat') f.ongecategoriseerd = 1;
+      else if (priveTxTab === 'gecat') f.gecategoriseerd = 1;
+      tx = await api('prive_transacties', f);
     } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
     const catOpts = (sel) => '<option value="">—</option>' + cats.map((c) => `<option value="${c.id}" ${Number(sel) === c.id ? 'selected' : ''}>${esc(c.naam)}</option>`).join('');
+    const TABS = [['alle', 'Alles', tel.alle], ['ongecat', 'Nog te doen', tel.ongecat], ['gecat', 'Gecategoriseerd', tel.gecat]];
     view.innerHTML = pageHead('Transacties', 'Al je privéboekingen — wijs categorieën toe om je uitgaven te volgen.', `<button class="btn btn-brand" id="nieuwTx">+ Transactie</button>`) + `
+      <div class="tabs" style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">${TABS.map(([k, l, n]) => `<button data-tab="${k}" class="${priveTxTab === k && !priveTxFilter.categorie ? 'active' : ''}">${l} <span class="badge">${n}</span></button>`).join('')}</div>
       <div class="page-actions" style="margin-bottom:12px;flex-wrap:wrap;gap:8px">
         <select id="fRek" style="width:auto"><option value="">Alle rekeningen</option>${rek.map((r) => `<option value="${r.id}" ${String(priveTxFilter.rekening) === String(r.id) ? 'selected' : ''}>${esc(r.naam)}</option>`).join('')}</select>
-        <select id="fCat" style="width:auto"><option value="">Alle categorieën</option><option value="__leeg" ${priveTxFilter.ongecategoriseerd ? 'selected' : ''}>— zonder categorie —</option>${cats.map((c) => `<option value="${c.id}" ${String(priveTxFilter.categorie) === String(c.id) ? 'selected' : ''}>${esc(c.naam)}</option>`).join('')}</select>
+        <select id="fCat" style="width:auto"><option value="">Alle categorieën</option>${cats.map((c) => `<option value="${c.id}" ${String(priveTxFilter.categorie) === String(c.id) ? 'selected' : ''}>${esc(c.naam)}</option>`).join('')}</select>
         <input type="date" id="fFrom" value="${priveTxFilter.from}" style="width:auto" /><span class="mut">t/m</span><input type="date" id="fTo" value="${priveTxFilter.to}" style="width:auto" />
         <label class="mut" style="font-size:13px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="onthoud" ${priveTxFilter.onthoud ? 'checked' : ''} style="width:auto" /> onthoud categorie</label>
       </div>
@@ -1024,8 +1031,9 @@
         <td class="num ${t.bedrag >= 0 ? 'suc' : 'dan'}" style="font-weight:500">${euro(t.bedrag)}</td>
         <td class="r" style="white-space:nowrap">${t.koppel_id ? '<span class="mut" title="Overboeking naar een eigen rekening — tegenkant is geboekt">⇄ overboeking</span> ' : `<button class="linkbtn" data-rek="${t.id}" title="Dit is een overboeking naar een eigen rekening (contant, spaar, gezamenlijk)">overboeking</button> `}<button class="linkbtn" data-edit="${t.id}">✎</button> <button class="linkbtn del" data-del="${t.id}">🗑</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">Geen transacties. Importeer een afschrift (Rekeningen) of voeg er handmatig een toe.</td></tr>'}
       </tbody></table></div></div>`;
+    view.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => { priveTxTab = b.dataset.tab; priveTxFilter.categorie = ''; laad(); });
     document.getElementById('fRek').onchange = (e) => { priveTxFilter.rekening = e.target.value; laad(); };
-    document.getElementById('fCat').onchange = (e) => { const v = e.target.value; if (v === '__leeg') { priveTxFilter.ongecategoriseerd = true; priveTxFilter.categorie = ''; } else { priveTxFilter.ongecategoriseerd = false; priveTxFilter.categorie = v; } laad(); };
+    document.getElementById('fCat').onchange = (e) => { priveTxFilter.categorie = e.target.value; laad(); };
     document.getElementById('fFrom').onchange = (e) => { priveTxFilter.from = e.target.value; laad(); };
     document.getElementById('fTo').onchange = (e) => { priveTxFilter.to = e.target.value; laad(); };
     document.getElementById('onthoud').onchange = (e) => { priveTxFilter.onthoud = e.target.checked; };

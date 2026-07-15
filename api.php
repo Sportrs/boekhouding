@@ -380,7 +380,11 @@ switch ($actie) {
         json_response(prive_transacties_lijst([
             'rekening' => $in['rekening'] ?? null, 'from' => $in['from'] ?? null, 'to' => $in['to'] ?? null,
             'categorie' => $in['categorie'] ?? null, 'ongecategoriseerd' => $in['ongecategoriseerd'] ?? null,
+            'gecategoriseerd' => $in['gecategoriseerd'] ?? null,
         ]));
+
+    case 'prive_transacties_tellingen':
+        json_response(prive_transacties_tellingen());
 
     case 'prive_transactie_opslaan':
         json_response(prive_transactie_opslaan($in));
