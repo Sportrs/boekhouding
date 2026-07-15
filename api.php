@@ -16,6 +16,7 @@ require __DIR__ . '/includes/import.php';
 require __DIR__ . '/includes/bank.php';
 require __DIR__ . '/includes/deelnemingen.php';
 require __DIR__ . '/includes/ib.php';
+require __DIR__ . '/includes/prive.php';
 
 set_exception_handler(function (Throwable $e): void {
     error_log('Boekhouding fout: ' . $e->getMessage());
@@ -337,6 +338,72 @@ switch ($actie) {
         $jaar = (int) ($in['jaar'] ?? 0) ?: (int) bh_boekjaar();
         json_response(ib_opslaan($jaar, is_array($in['gegevens'] ?? null) ? $in['gegevens'] : []));
     }
+
+    // ---------------- Privéboekhouding ----------------
+    case 'prive_overzicht': {
+        $jaar = (int) ($in['jaar'] ?? 0) ?: (int) date('Y');
+        $from = (isset($in['from']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $in['from'])) ? (string) $in['from'] : $jaar . '-01-01';
+        $to   = (isset($in['to'])   && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $in['to']))   ? (string) $in['to']   : $jaar . '-12-31';
+        json_response(prive_overzicht($from, $to));
+    }
+
+    case 'prive_rekeningen':
+        json_response(prive_rekeningen_lijst());
+
+    case 'prive_rekening_opslaan':
+        json_response(prive_rekening_opslaan($in));
+
+    case 'prive_rekening_verwijder':
+        prive_rekening_verwijder((int) ($in['id'] ?? 0));
+        json_response(['ok' => true]);
+
+    case 'prive_bank_import': {
+        $rek = (int) ($in['rekeningId'] ?? 0);
+        $inhoud = (string) ($in['bestand'] ?? '');
+        if (strlen($inhoud) < 20) json_response(['fout' => 'Geen bestand ontvangen'], 422);
+        try { json_response(prive_bank_import($rek, $inhoud)); }
+        catch (RuntimeException $e) { json_response(['fout' => $e->getMessage()], 422); }
+    }
+
+    case 'prive_categorieen':
+        json_response(prive_categorieen_lijst());
+
+    case 'prive_categorie_opslaan':
+        json_response(prive_categorie_opslaan($in));
+
+    case 'prive_categorie_verwijder':
+        prive_categorie_verwijder((int) ($in['id'] ?? 0));
+        json_response(['ok' => true]);
+
+    case 'prive_transacties':
+        json_response(prive_transacties_lijst([
+            'rekening' => $in['rekening'] ?? null, 'from' => $in['from'] ?? null, 'to' => $in['to'] ?? null,
+            'categorie' => $in['categorie'] ?? null, 'ongecategoriseerd' => $in['ongecategoriseerd'] ?? null,
+        ]));
+
+    case 'prive_transactie_opslaan':
+        json_response(prive_transactie_opslaan($in));
+
+    case 'prive_transactie_categorie':
+        json_response(prive_transactie_categorie((int) ($in['id'] ?? 0), (int) ($in['categorieId'] ?? 0) ?: null, !empty($in['onthoud'])));
+
+    case 'prive_transactie_verwijder':
+        prive_transactie_verwijder((int) ($in['id'] ?? 0));
+        json_response(['ok' => true]);
+
+    case 'prive_posten':
+        json_response(prive_posten_lijst());
+
+    case 'prive_post_opslaan':
+        json_response(prive_post_opslaan($in));
+
+    case 'prive_post_status':
+        prive_post_status((int) ($in['id'] ?? 0), (string) ($in['status'] ?? 'open'));
+        json_response(['ok' => true]);
+
+    case 'prive_post_verwijder':
+        prive_post_verwijder((int) ($in['id'] ?? 0));
+        json_response(['ok' => true]);
 
     case 'grootboekkaart': {
         $nr = trim((string) ($in['nummer'] ?? ''));
