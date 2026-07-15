@@ -60,8 +60,35 @@
   async function loadSettings() { state.settings = await api('instellingen'); }
   async function loadAccounts() { state.accounts = await api('rekeningen'); }
 
+  // ---------------- Tooltip (volledige tekst bij afgekapte cellen) ----------------
+  function initTooltip() {
+    const tip = document.createElement('div');
+    tip.className = 'tip';
+    tip.style.display = 'none';
+    document.body.appendChild(tip);
+    const plaats = (e) => {
+      const pad = 14;
+      const r = tip.getBoundingClientRect();
+      let x = e.clientX + pad, y = e.clientY + pad;
+      if (x + r.width > window.innerWidth) x = Math.max(4, e.clientX - r.width - pad);
+      if (y + r.height > window.innerHeight) y = Math.max(4, e.clientY - r.height - pad);
+      tip.style.left = x + 'px'; tip.style.top = y + 'px';
+    };
+    document.addEventListener('mouseover', (e) => {
+      const el = e.target.closest('[data-tip]');
+      if (!el || !el.dataset.tip) return;
+      tip.textContent = el.dataset.tip;
+      tip.style.display = 'block';
+      plaats(e);
+    });
+    document.addEventListener('mousemove', (e) => { if (tip.style.display !== 'none') plaats(e); });
+    document.addEventListener('mouseout', (e) => { if (e.target.closest('[data-tip]')) tip.style.display = 'none'; });
+    document.addEventListener('click', () => { tip.style.display = 'none'; }, true);
+  }
+
   // ---------------- Boot ----------------
   async function boot() {
+    initTooltip();
     try {
       const me = await api('me');
       state.authed = !!me.authenticated;
@@ -408,8 +435,8 @@
           <td class="num" style="text-align:left">${datumNL(r.datum)}</td>
           <td class="${r.afbij === 'af' ? 'dan' : 'suc'}">${r.afbij}</td>
           <td class="num" style="color:var(--ink)">${euro(r.bedrag)}</td>
-          <td title="${esc(r.tegenrekening_naam || '')}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.tegenrekening_naam || '—')}${r.leverancier_naam ? ` <span class="mut">→ ${esc(r.leverancier_naam)}</span>` : ''}</td>
-          <td title="${esc(r.omschrijving || '')}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.omschrijving || '')}</td>
+          <td data-tip="${esc(r.tegenrekening_naam || '')}${r.leverancier_naam ? ' → ' + esc(r.leverancier_naam) : ''}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.tegenrekening_naam || '—')}${r.leverancier_naam ? ` <span class="mut">→ ${esc(r.leverancier_naam)}</span>` : ''}</td>
+          <td data-tip="${esc(r.omschrijving || '')}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.omschrijving || '')}</td>
           <td>${badge}</td>
           <td class="r" style="white-space:nowrap">${acties}</td></tr>`;
       }).join('') : `<tr><td colspan="7" class="empty">Geen bankregels — importeer een MT940 (.sta) bestand.</td></tr>`;
@@ -1025,8 +1052,8 @@
       ${tx.length ? tx.map((t) => `<tr>
         <td class="num" style="text-align:left">${datumNL(t.datum)}</td>
         <td class="mut">${esc(t.rekening_naam || '')}</td>
-        <td title="${esc(t.tegenrekening_naam || '')}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.tegenrekening_naam || '—')}</td>
-        <td title="${esc(t.omschrijving || '')}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
+        <td data-tip="${esc(t.tegenrekening_naam || '')}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.tegenrekening_naam || '—')}</td>
+        <td data-tip="${esc(t.omschrijving || '')}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
         <td><select data-txcat="${t.id}" style="min-width:150px">${catOpts(t.categorie_id)}</select></td>
         <td class="num ${t.bedrag >= 0 ? 'suc' : 'dan'}" style="font-weight:500">${euro(t.bedrag)}</td>
         <td class="r" style="white-space:nowrap">${t.koppel_id ? '<span class="mut" title="Overboeking naar een eigen rekening — tegenkant is geboekt">⇄ overboeking</span> ' : `<button class="linkbtn" data-rek="${t.id}" title="Dit is een overboeking naar een eigen rekening (contant, spaar, gezamenlijk)">overboeking</button> `}<button class="linkbtn" data-edit="${t.id}">✎</button> <button class="linkbtn del" data-del="${t.id}">🗑</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">Geen transacties. Importeer een afschrift (Rekeningen) of voeg er handmatig een toe.</td></tr>'}
