@@ -293,9 +293,11 @@
         <tfoot><tr><td></td><td style="font-weight:500;color:var(--inkdim)">Totaal ${esc(label.toLowerCase())}</td><td class="num" style="font-weight:600">${euro(tot)}</td></tr></tfoot></table></div>`;
     };
     const html = groepen.map(([t, l]) => kaartFor(t, l)).join('');
-    view.innerHTML = pageHead('Grootboek', 'Klik een rekening om de opbouw te zien (grootboekkaart).') +
+    view.innerHTML = pageHead('Grootboek', 'Klik een rekening om de opbouw te zien (grootboekkaart).',
+      `<button class="btn btn-ghost" id="renterc">Rente r/c berekenen</button>`) +
       (html || `<div class="card p5 mut">Nog geen rekeningen.</div>`);
     view.querySelectorAll('[data-kaart]').forEach((el) => el.addEventListener('click', () => openKaart(el.dataset.kaart)));
+    const rr = document.getElementById('renterc'); if (rr) rr.onclick = () => openRenteRC(() => pageGrootboek(view));
   }
 
   // ---------------- Pagina: Bank (MT940 + afletteren) ----------------
@@ -353,8 +355,9 @@
       const tabs = ['open', 'gekoppeld', 'genegeerd', 'alle'];
       const rows = lijst.length ? lijst.map((r) => {
         const badge = r.status === 'gekoppeld' ? '<span class="badge" style="color:var(--success)">gekoppeld</span>' : r.status === 'genegeerd' ? '<span class="badge">genegeerd</span>' : '';
+        const koppelBtn = r.match_count > 0 ? `<button class="btn btn-brand" data-koppel="${r.id}" style="padding:4px 10px" title="Er bestaat al een boeking met dit bedrag — koppel i.p.v. opnieuw boeken">Koppel${r.match_count > 1 ? ' (' + r.match_count + ')' : ''}</button> ` : '';
         const acties = r.status === 'open'
-          ? `<button class="btn btn-success" data-boek="${r.id}" style="padding:4px 10px">Boek</button> <button class="linkbtn" data-memo="${r.id}">overboeking</button> <button class="linkbtn" data-koppel="${r.id}">koppel</button> <button class="linkbtn" data-negeer="${r.id}">negeer</button>`
+          ? `${koppelBtn}<button class="btn btn-success" data-boek="${r.id}" style="padding:4px 10px">Boek</button> <button class="linkbtn" data-memo="${r.id}">overboeking</button> <button class="linkbtn" data-negeer="${r.id}">negeer</button>`
           : r.status === 'gekoppeld'
             ? `<button class="linkbtn" data-ontkoppel="${r.id}">ontkoppel</button>`
             : `<button class="linkbtn" data-open="${r.id}">heropenen</button>`;
@@ -378,7 +381,7 @@
       view.innerHTML =
         pageHead('Bank', 'Importeer je MT940-afschrift en letter betalingen af tegen boekingen.',
           `<button class="btn btn-brand" id="mt940">MT940 importeren</button><input type="file" id="mt940file" accept=".sta,.txt,text/plain" style="display:none" />`) +
-        `<div class="help" style="margin-bottom:16px">Importeer je bankafschrift (MT940 <b>.sta</b>) en behandel elke regel: <b>Boek</b> = een inkoop/verkoopfactuur (upload de PDF, BTW wordt ingevuld) · <b>overboeking</b> = geen factuur maar een verschuiving (naar privé, BTW-betaling, tussen banken) · <b>koppel</b> = aan een boeking die je al had ingevoerd · <b>negeer</b> = niet relevant. Groen "gekoppeld" betekent: klaar.</div>
+        `<div class="help" style="margin-bottom:16px"><b>Per bankregel kies je één actie:</b> <b>Boek</b> = maak een nieuwe boeking (factuur — upload de PDF, BTW wordt ingevuld). <b>Overboeking</b> = geen factuur maar een verschuiving (naar privé, BTW-betaling, tussen banken). <b>Negeer</b> = niet relevant. De blauwe <b>Koppel</b>-knop verschijnt alléén als er al een boeking met hetzelfde bedrag bestaat — dan koppel je die (zodat je niet dubbel boekt). Groen "gekoppeld" = klaar.</div>
         <div class="tabs" style="margin-bottom:16px;display:flex;gap:8px">${tabs.map((t) => `<button data-tab="${t}" class="${filter === t ? 'active' : ''}">${t}</button>`).join('')}</div>
          <div class="card" style="margin-bottom:24px"><table>
            <thead><tr><th>Datum</th><th>Af/bij</th><th class="r">Bedrag</th><th>Tegenrekening</th><th>Omschrijving</th><th>Status</th><th></th></tr></thead>
@@ -1043,6 +1046,67 @@
         const r = await api('memoriaal', { datum: st.datum, omschrijving: st.omschrijving, regels }, 'POST');
         toast('Memoriaal geboekt ✓'); close();
         if (opts && opts.onSaved) await opts.onSaved(r.id); else if (refresh) refresh();
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    render();
+  }
+
+  // ---------------- Modal: Rente rekening-courant ----------------
+  async function openRenteRC(refresh) {
+    let gb;
+    try { gb = await api('grootboek'); if (!state.accounts.length) await loadAccounts(); } catch (e) { toast(e.message, 'error'); return; }
+    const actief = gb.filter((a) => a.type === 'actief');
+    const opbrengsten = gb.filter((a) => a.type === 'opbrengsten');
+    const boekjaar = (state.settings && state.settings.boekjaar) || String(new Date().getFullYear());
+    const num = (v) => Number(String(v).replace(',', '.')) || 0;
+    const st = {
+      rc: (actief.find((a) => /rekening.?courant|aandeelhouder/i.test(a.naam)) || {}).nummer || '',
+      rente: (opbrengsten.find((a) => /rente/i.test(a.naam)) || {}).nummer || '',
+      pct: '1.5', drempel: '17500', grondslag: 'boven', datum: boekjaar + '-12-31',
+    };
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    const saldoRC = () => { const a = gb.find((x) => x.nummer === st.rc); return a ? Number(a.saldo) : 0; };
+    const grondslag = () => (st.grondslag === 'boven' ? Math.max(0, round2(saldoRC() - num(st.drempel))) : saldoRC());
+    const rente = () => round2(grondslag() * num(st.pct) / 100);
+    const opt = (list, sel) => list.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === sel ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('');
+    function render() {
+      ov.innerHTML = `<div class="modal"><div class="modal-head"><h2>Rente rekening-courant</h2><button class="x">✕</button></div>
+        <div class="modal-body">
+          <div class="help">De BV brengt zakelijke rente in rekening over de rekening-courant met de aandeelhouder. De rente <b>verhoogt je vordering</b> (DR) en is een <b>rentebate</b> (CR, geen BTW). Percentage en grondslag zijn een fiscale keuze — laat je boekhouder ze bevestigen.</div>
+          <div class="row">
+            <label class="field"><span>Rekening-courant</span><select id="rc">${opt(actief, st.rc)}</select></label>
+            <label class="field"><span>Rentebaten-rekening</span><select id="rente">${opbrengsten.length ? opt(opbrengsten, st.rente) : '<option value="">— maak eerst een opbrengstrekening aan —</option>'}</select></label>
+          </div>
+          <div class="row">
+            <label class="field"><span>Rentepercentage</span><input class="num" id="pct" value="${esc(st.pct)}" /></label>
+            <label class="field"><span>Datum</span><input type="date" id="datum" value="${esc(st.datum)}" /></label>
+          </div>
+          <div class="row">
+            <label class="field"><span>Grondslag</span><select id="grondslag"><option value="boven" ${st.grondslag === 'boven' ? 'selected' : ''}>saldo boven de grens</option><option value="heel" ${st.grondslag === 'heel' ? 'selected' : ''}>het hele saldo</option></select></label>
+            <label class="field"><span>Grens (€)</span><input class="num" id="drempel" value="${esc(st.drempel)}" ${st.grondslag === 'heel' ? 'disabled' : ''} /></label>
+          </div>
+          <div class="preview"><div class="h">Berekening</div>
+            <table><tbody>
+              <tr><td style="padding:4px 16px">Saldo rekening-courant</td><td class="num" style="padding:4px 16px;color:var(--ink)">${euro(saldoRC())}</td></tr>
+              <tr><td style="padding:4px 16px">Grondslag ${st.grondslag === 'boven' ? '(boven € ' + (num(st.drempel)).toLocaleString('nl-NL') + ')' : '(heel saldo)'}</td><td class="num" style="padding:4px 16px">${euro(grondslag())}</td></tr>
+              <tr><td style="padding:4px 16px">Rente (${esc(st.pct)}%)</td><td class="num" style="padding:4px 16px;color:var(--ink);font-weight:700">${euro(rente())}</td></tr>
+            </tbody></table></div>
+          <div class="mut" style="font-size:12px">Wordt geboekt als memoriaal: DR ${esc(st.rc || 'r/c')} / CR ${esc(st.rente || 'rentebaten')} — ${euro(rente())}.</div>
+        </div>
+        <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-success" id="boek">Boeken ✓</button></div></div>`;
+      ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
+      ['rc', 'rente', 'pct', 'datum', 'grondslag', 'drempel'].forEach((id) => { const el = ov.querySelector('#' + id); if (el) el.onchange = () => { st[id] = el.value; render(); }; });
+      ov.querySelector('#boek').onclick = boek;
+    }
+    async function boek() {
+      const bedrag = rente();
+      if (!st.rc) return toast('Kies de rekening-courant', 'error');
+      if (!st.rente) return toast('Kies (of maak) een rentebaten-opbrengstrekening', 'error');
+      if (!(bedrag > 0)) return toast('De berekende rente is € 0', 'error');
+      try {
+        await api('memoriaal', { datum: st.datum, omschrijving: 'Rente rekening-courant ' + String(st.datum).slice(0, 4), regels: [{ rekening: st.rc, debet: bedrag, credit: 0 }, { rekening: st.rente, debet: 0, credit: bedrag }] }, 'POST');
+        toast('Rente geboekt ✓'); close(); if (refresh) refresh();
       } catch (e) { toast(e.message, 'error'); }
     }
     render();

@@ -93,7 +93,12 @@ function bank_lijst(?string $status = null): array {
     $sql = "SELECT b.id, b.datum, b.bedrag, b.afbij, b.tegenrekening_iban, b.tegenrekening_naam,
                    b.omschrijving, b.status, b.transactie_id, b.leverancier_id,
                    l.naam AS leverancier_naam, l.btw_regime, l.standaard_rekening,
-                   t.omschrijving AS boeking_oms, t.datum AS boeking_datum
+                   t.omschrijving AS boeking_oms, t.datum AS boeking_datum,
+                   (SELECT COUNT(*) FROM (
+                       SELECT tt.id, (SELECT COALESCE(SUM(debet),0) FROM transactie_regels rr WHERE rr.transactie_id = tt.id) AS tot
+                       FROM transacties tt
+                       WHERE tt.id NOT IN (SELECT transactie_id FROM banktransacties WHERE transactie_id IS NOT NULL)
+                   ) mm WHERE ABS(mm.tot - b.bedrag) < 0.005) AS match_count
             FROM banktransacties b
             LEFT JOIN leveranciers l ON l.id = b.leverancier_id
             LEFT JOIN transacties  t ON t.id = b.transactie_id";
@@ -108,6 +113,7 @@ function bank_lijst(?string $status = null): array {
         $r['bedrag'] = (float) $r['bedrag'];
         $r['transactie_id'] = $r['transactie_id'] !== null ? (int) $r['transactie_id'] : null;
         $r['leverancier_id'] = $r['leverancier_id'] !== null ? (int) $r['leverancier_id'] : null;
+        $r['match_count'] = (int) ($r['match_count'] ?? 0);
     }
     return $rows;
 }
