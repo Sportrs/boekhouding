@@ -270,13 +270,13 @@ function prive_transactie_koppel_rekening(int $txId, int $doelRekeningId): array
     if ($n->fetchColumn() === false) json_response(['fout' => 'Onbekende doelrekening'], 422);
     $n->execute([':id' => $t['rekening_id']]);
     $bronNaam = (string) $n->fetchColumn();
-    $cat = $t['categorie_id'] ?: prive_overboeking_categorie_id();
+    $cat = prive_overboeking_categorie_id();   // beide kanten neutraal: geen valse inkomst/uitgave
 
     db()->beginTransaction();
     $ins = db()->prepare("INSERT INTO prive_transacties (rekening_id, datum, bedrag, tegenrekening_naam, omschrijving, categorie_id, koppel_id) VALUES (:r,:d,:b,:tn,:o,:c,:k)");
     $ins->execute([':r' => $doelRekeningId, ':d' => $t['datum'], ':b' => centen(-(float) $t['bedrag']), ':tn' => $bronNaam, ':o' => 'Overboeking van ' . $bronNaam, ':c' => $cat, ':k' => $txId]);
     $mirror = (int) db()->lastInsertId();
-    db()->prepare("UPDATE prive_transacties SET koppel_id = :m WHERE id = :id")->execute([':m' => $mirror, ':id' => $txId]);
+    db()->prepare("UPDATE prive_transacties SET koppel_id = :m, categorie_id = :c WHERE id = :id")->execute([':m' => $mirror, ':c' => $cat, ':id' => $txId]);
     db()->commit();
     return ['ok' => true];
 }
