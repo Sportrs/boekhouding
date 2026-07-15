@@ -91,6 +91,7 @@ opnieuw draaien kan geen kwaad.
 - `migraties/003_bank_leveranciers.sql` — tabellen `leveranciers` + `banktransacties` (MT940-import & afletteren).
 - `migraties/004_is_bank.sql` — kolom `is_bank` op rekeningen (markeert bank-/kasrekeningen).
 - `migraties/005_deelnemingen.sql` — tabel `deelnemingen` (zelf bij te houden register; boekwaarde uit de gekoppelde grootboekrekening).
+- `migraties/006_ib.sql` — tabel `ib_gegevens` (privé-inkomstenbelasting, invoer per jaar).
 
 ---
 

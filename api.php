@@ -15,6 +15,7 @@ require __DIR__ . '/includes/ai.php';
 require __DIR__ . '/includes/import.php';
 require __DIR__ . '/includes/bank.php';
 require __DIR__ . '/includes/deelnemingen.php';
+require __DIR__ . '/includes/ib.php';
 
 set_exception_handler(function (Throwable $e): void {
     error_log('Boekhouding fout: ' . $e->getMessage());
@@ -325,6 +326,17 @@ switch ($actie) {
     case 'deelneming_verwijder':
         deelneming_verwijder((int) ($in['id'] ?? 0));
         json_response(['ok' => true]);
+
+    // ---------------- Inkomstenbelasting (privé) ----------------
+    case 'ib': {
+        $jaar = (int) ($in['jaar'] ?? 0) ?: (int) bh_boekjaar();
+        json_response(ib_ophalen($jaar));
+    }
+
+    case 'ib_opslaan': {
+        $jaar = (int) ($in['jaar'] ?? 0) ?: (int) bh_boekjaar();
+        json_response(ib_opslaan($jaar, is_array($in['gegevens'] ?? null) ? $in['gegevens'] : []));
+    }
 
     case 'grootboekkaart': {
         $nr = trim((string) ($in['nummer'] ?? ''));

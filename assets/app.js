@@ -109,6 +109,7 @@
     { hash: '#/btw', label: 'BTW-aangifte', ic: '％', page: pageBTW },
     { hash: '#/jaarverslag', label: 'Jaarverslag', ic: '▦', page: pageJaarverslag },
     { hash: '#/deelnemingen', label: 'Deelnemingen', ic: '◈', page: pageDeelnemingen },
+    { hash: '#/ib', label: 'Inkomstenbelasting', ic: '§', page: pageIB },
     { hash: '#/import', label: 'Import', ic: '⇪', page: pageImport },
     { hash: '#/instellingen', label: 'Instellingen', ic: '⚙', page: pageInstellingen },
   ];
@@ -461,9 +462,11 @@
   async function pageBTW(view) {
     let jaar = Number((state.settings && state.settings.boekjaar) || new Date().getFullYear());
     let kwartaal = 1;
+    let data = null;
     async function load() {
       let d;
       try { d = await api('btw', { quarter: kwartaal, year: jaar }); } catch (e) { return `<div class="dan">${esc(e.message)}</div>`; }
+      data = d;
       const teBetalen = d.saldo >= 0;
       const rij = (label, g, b) => `<tr><td>${label}</td><td class="num mut">${g != null ? euro(g) : ''}</td><td class="num" style="color:var(--ink)">${euro(b)}</td></tr>`;
       const txRows = d.transacties.length ? d.transacties.map((t) => `<tr>
@@ -489,6 +492,8 @@
             <div style="font-size:14px;font-weight:500;color:var(--inkdim)">Saldo aangifte</div>
             <div class="num ${teBetalen ? 'dan' : 'suc'}" style="font-size:30px;font-weight:700;margin-top:8px;text-align:left">${euro(Math.abs(d.saldo))}</div>
             <div class="mut" style="font-size:14px;margin-top:4px">${teBetalen ? 'Te betalen aan de Belastingdienst' : 'Te ontvangen van de Belastingdienst'}</div>
+            <button class="btn btn-brand" id="afdracht" style="margin-top:14px;width:100%">${teBetalen ? 'Afdracht boeken' : 'Teruggaaf boeken'}</button>
+            <div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5">Boekt de verschuldigde BTW (1910) en voorbelasting (1810) weg tegen de bank, zodat beide naar 0 lopen. Doe dit als je betaalt/de teruggaaf ontvangt.</div>
           </div>
           <div class="card" style="margin-top:24px">
             <div class="card-head">Boekingen met BTW in dit kwartaal</div>
@@ -501,6 +506,8 @@
       const tabs = `<div class="tabs page-actions">${[1, 2, 3, 4].map((q) => `<button data-q="${q}" class="${q === kwartaal ? 'active' : ''}">Q${q}</button>`).join('')}</div>`;
       view.innerHTML = pageHead('BTW-aangifte', `Omzetbelasting per kwartaal — ${jaar}`, tabs) + (await load());
       view.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => { kwartaal = Number(b.dataset.q); rerender(); }));
+      const afdr = document.getElementById('afdracht');
+      if (afdr) afdr.onclick = () => openBtwAfdracht(data, kwartaal, jaar, () => rerender());
     }
     rerender();
   }
@@ -690,6 +697,142 @@
       if (!body.naam.trim()) return toast('Naam is verplicht', 'error');
       try { await api('deelneming_opslaan', body, 'POST'); toast('Opgeslagen ✓'); close(); refresh(); } catch (e) { toast(e.message, 'error'); }
     };
+  }
+
+  // ---------------- Pagina: Inkomstenbelasting (privé/DGA) ----------------
+  const IB_DEF = {
+    loon: '', overigBox1: '', woz: '', ewfPct: '0.35', hypotheekrente: '',
+    dividend: '',
+    spaargeld: '', beleggingen: '', schulden: '',
+    loonheffing: '', heffingskortingen: '',
+    // Tarieven 2026 — RICHTWAARDEN, controleer op belastingdienst.nl
+    b1s1: '38883', b1t1: '35.70', b1s2: '79137', b1t2: '37.56', b1t3: '49.50',
+    b2grens: '68843', b2t1: '24.5', b2t2: '31',
+    b3vrij: '57684', b3schuldDrempel: '3800', b3fSpaar: '1.44', b3fBeleg: '6.04', b3fSchuld: '2.62', b3tarief: '36',
+  };
+  const ibNum = (v) => { let s = String(v).trim().replace(/\s/g, ''); if (s === '') return 0; if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.'); return Number(s) || 0; };
+
+  async function pageIB(view) {
+    let jaar = Number((state.settings && state.settings.boekjaar) || new Date().getFullYear());
+    async function load() {
+      let resp;
+      try { resp = await api('ib', { jaar }); await loadAccounts(); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+      const rc = resp.prefill ? resp.prefill.rekeningCourant : null;
+      const st = Object.assign({}, IB_DEF, resp.gegevens || {});
+      const n = ibNum;
+
+      function bereken() {
+        // Box 1 — werk & woning
+        const loon = n(st.loon), overig = n(st.overigBox1);
+        const ewf = round2(n(st.woz) * n(st.ewfPct) / 100);
+        const rente = n(st.hypotheekrente);
+        const inkomenWoning = round2(ewf - rente);
+        const belastbaar1 = round2(loon + overig + inkomenWoning);
+        const box1bel = (inc) => {
+          if (inc <= 0) return 0;
+          const s1 = n(st.b1s1), s2 = n(st.b1s2);
+          let b = Math.min(inc, s1) * n(st.b1t1) / 100;
+          if (inc > s1) b += (Math.min(inc, s2) - s1) * n(st.b1t2) / 100;
+          if (inc > s2) b += (inc - s2) * n(st.b1t3) / 100;
+          return round2(b);
+        };
+        const belBox1 = box1bel(belastbaar1);
+        // Box 2 — aanmerkelijk belang
+        const div = n(st.dividend);
+        const belBox2 = round2(Math.min(div, n(st.b2grens)) * n(st.b2t1) / 100 + Math.max(0, div - n(st.b2grens)) * n(st.b2t2) / 100);
+        // Box 3 — sparen & beleggen (forfaitair)
+        const spaar = n(st.spaargeld), beleg = n(st.beleggingen);
+        const schuldNa = Math.max(0, n(st.schulden) - n(st.b3schuldDrempel));
+        const grondslag = round2(spaar + beleg - schuldNa);
+        const rendement = round2(spaar * n(st.b3fSpaar) / 100 + beleg * n(st.b3fBeleg) / 100 - schuldNa * n(st.b3fSchuld) / 100);
+        const pct = grondslag > 0 ? rendement / grondslag : 0;
+        const belastbareGrondslag = Math.max(0, round2(grondslag - n(st.b3vrij)));
+        const belastbaarRendement = round2(belastbareGrondslag * pct);
+        const belBox3 = round2(belastbaarRendement * n(st.b3tarief) / 100);
+        // Totaal
+        const voorKorting = round2(belBox1 + belBox2 + belBox3);
+        const naKorting = round2(Math.max(0, voorKorting - n(st.heffingskortingen)));
+        const teBetalen = round2(naKorting - n(st.loonheffing));
+        const bij = teBetalen >= 0;
+
+        const rij = (l, v, dim) => `<tr><td${dim ? ' class="mut" style="padding-left:24px"' : ''}>${l}</td><td class="num"${dim ? '' : ' style="color:var(--ink)"'}>${euro(v)}</td></tr>`;
+        const el = document.getElementById('ib-uitkomst');
+        if (el) el.innerHTML = `
+          <table><tbody>
+            <tr><td style="font-weight:500;color:var(--inkdim)">Box 1 — werk & woning</td><td class="num" style="color:var(--ink)">${euro(belBox1)}</td></tr>
+            ${rij('belastbaar inkomen box 1', belastbaar1, true)}
+            ${rij('waarvan eigen woning (forfait − rente)', inkomenWoning, true)}
+            <tr><td style="font-weight:500;color:var(--inkdim)">Box 2 — aanmerkelijk belang (BV)</td><td class="num" style="color:var(--ink)">${euro(belBox2)}</td></tr>
+            <tr><td style="font-weight:500;color:var(--inkdim)">Box 3 — sparen & beleggen</td><td class="num" style="color:var(--ink)">${euro(belBox3)}</td></tr>
+            ${rij('rendementsgrondslag', grondslag, true)}
+            ${rij(`forfaitair rendement (${(pct * 100).toFixed(2)}%)`, belastbaarRendement, true)}
+            <tr style="border-top:1px solid var(--line)"><td style="font-weight:500;color:var(--inkdim)">Belasting vóór heffingskortingen</td><td class="num" style="color:var(--ink)">${euro(voorKorting)}</td></tr>
+            ${rij('af: heffingskortingen (schatting)', -n(st.heffingskortingen), true)}
+            ${rij('af: reeds ingehouden loonheffing', -n(st.loonheffing), true)}
+          </tbody>
+          <tfoot><tr><td style="font-weight:600;color:var(--ink)">${bij ? 'Naar schatting bij te betalen' : 'Naar schatting terug te ontvangen'}</td><td class="num ${bij ? 'dan' : 'suc'}" style="font-size:18px;font-weight:700">${euro(Math.abs(teBetalen))}</td></tr></tfoot></table>`;
+      }
+
+      const veld = (k, label, ph, w) => `<label class="field"><span>${label}</span><input class="num" data-k="${k}" value="${esc(st[k])}" placeholder="${ph || ''}"${w ? ` style="max-width:${w}"` : ''} /></label>`;
+      const rcHint = rc !== null
+        ? `<div class="help" style="margin-top:8px">Saldo <b>rekening-courant met de BV</b> uit je boekhouding: <b>${euro(rc)}</b>. Heb je een schuld aan je eigen BV, dan telt die mee als box 3-schuld; <b>boven € 500.000</b> geldt de Wet excessief lenen (dan box 2). De zakelijke rente boek je in de BV via Grootboek → <i>Rente r/c</i>.</div>`
+        : '';
+
+      view.innerHTML = pageHead('Inkomstenbelasting', `Privé-schatting (DGA) — belastingjaar ${jaar}`,
+        `<input type="number" id="ibjaar" value="${jaar}" style="width:96px" title="Belastingjaar" /> <button class="btn btn-brand" id="ibsave">Opslaan</button>`) +
+        `<div class="help" style="margin-bottom:16px;border-color:var(--warning);background:rgba(245,158,11,.1)">⚠️ Dit is een <b>indicatieve</b> berekening van je privé-inkomstenbelasting, los van de BV-boekhouding. De tarieven onderaan zijn <b>richtwaarden voor ${jaar}</b> — controleer ze op belastingdienst.nl en laat je aangifte door een adviseur toetsen voordat je hierop vertrouwt.</div>
+        <div class="grid grid-3">
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div class="card"><div class="card-head">Box 1 — inkomen uit werk & woning</div><div class="card-body" style="display:flex;flex-direction:column;gap:14px">
+              <div class="mut" style="font-size:13px">Je DGA-salaris uit de BV (loon), plus je eigen woning: het eigenwoningforfait minus je betaalde hypotheekrente.</div>
+              ${veld('loon', 'Bruto loon uit de BV (DGA-salaris)', 'bijv. 56000')}
+              ${veld('overigBox1', 'Overig inkomen box 1', '0')}
+              <div class="row">${veld('woz', 'WOZ-waarde eigen woning', '0')}${veld('ewfPct', 'Eigenwoningforfait %', '0,35')}</div>
+              ${veld('hypotheekrente', 'Betaalde hypotheekrente', '0')}
+            </div></div>
+            <div class="card"><div class="card-head">Box 2 — aanmerkelijk belang (je BV)</div><div class="card-body" style="display:flex;flex-direction:column;gap:14px">
+              <div class="mut" style="font-size:13px">Dividend dat je jezelf vanuit GIBS B.V. uitkeert. Twee schijven (zie tarieven).</div>
+              ${veld('dividend', 'Dividend uit de BV', '0')}
+            </div></div>
+            <div class="card"><div class="card-head">Box 3 — sparen & beleggen</div><div class="card-body" style="display:flex;flex-direction:column;gap:14px">
+              <div class="mut" style="font-size:13px">Je privévermogen: spaargeld en beleggingen minus schulden (leningen). Forfaitair belast.</div>
+              ${veld('spaargeld', 'Spaargeld / banktegoeden', '0')}
+              ${veld('beleggingen', 'Beleggingen / overige bezittingen', '0')}
+              ${veld('schulden', 'Schulden (leningen)', '0')}
+              ${rcHint}
+            </div></div>
+            <div class="card"><div class="card-head">Al betaald</div><div class="card-body" style="display:flex;flex-direction:column;gap:14px">
+              <div class="mut" style="font-size:13px">De BV houdt al loonheffing in op je salaris. Vul dat in plus een schatting van je heffingskortingen (algemene heffingskorting + arbeidskorting) — die haal je uit de voorlopige aanslag of belastingdienst.nl.</div>
+              ${veld('loonheffing', 'Reeds ingehouden loonheffing', '0')}
+              ${veld('heffingskortingen', 'Heffingskortingen (schatting)', '0')}
+            </div></div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div class="card"><div class="card-head">Uitkomst (indicatie)</div><div class="card-body"><div id="ib-uitkomst"></div></div></div>
+            <div class="card"><div class="card-head">Tarieven ${jaar} — richtwaarden, aanpasbaar</div><div class="card-body" style="display:flex;flex-direction:column;gap:12px;font-size:13px">
+              <div class="mut">Box 1 (schijfgrenzen & %):</div>
+              <div class="row">${veld('b1s1', 'Grens schijf 1 (€)', '')}${veld('b1t1', 'Tarief 1 (%)', '')}</div>
+              <div class="row">${veld('b1s2', 'Grens schijf 2 (€)', '')}${veld('b1t2', 'Tarief 2 (%)', '')}</div>
+              ${veld('b1t3', 'Tarief schijf 3 (%)', '')}
+              <div class="mut" style="margin-top:6px">Box 2:</div>
+              <div class="row">${veld('b2grens', 'Grens (€)', '')}${veld('b2t1', 'Tarief laag (%)', '')}</div>
+              ${veld('b2t2', 'Tarief hoog (%)', '')}
+              <div class="mut" style="margin-top:6px">Box 3 (forfaits & tarief):</div>
+              <div class="row">${veld('b3vrij', 'Heffingsvrij vermogen (€)', '')}${veld('b3schuldDrempel', 'Schulddrempel (€)', '')}</div>
+              <div class="row">${veld('b3fSpaar', 'Forfait spaargeld (%)', '')}${veld('b3fBeleg', 'Forfait beleggingen (%)', '')}</div>
+              <div class="row">${veld('b3fSchuld', 'Forfait schulden (%)', '')}${veld('b3tarief', 'Box 3-tarief (%)', '')}</div>
+            </div></div>
+          </div>
+        </div>`;
+
+      view.querySelectorAll('[data-k]').forEach((el) => el.oninput = () => { st[el.dataset.k] = el.value; bereken(); });
+      document.getElementById('ibjaar').onchange = (e) => { const j = Number(e.target.value); if (j >= 2000 && j <= 2100) { jaar = j; load(); } };
+      document.getElementById('ibsave').onclick = async () => {
+        try { await api('ib_opslaan', { jaar, gegevens: st }, 'POST'); toast('IB-gegevens opgeslagen ✓'); } catch (e) { toast(e.message, 'error'); }
+      };
+      bereken();
+    }
+    load();
   }
 
   // ---------------- Pagina: Instellingen ----------------
@@ -1147,6 +1290,24 @@
       } catch (e) { toast(e.message, 'error'); }
     }
     render();
+  }
+
+  // ---------------- BTW: afdracht / teruggaaf boeken ----------------
+  function openBtwAfdracht(d, kwartaal, jaar, refresh) {
+    if (!d) return toast('BTW-gegevens nog niet geladen', 'error');
+    const verschuldigd = round2(d.verschuldigd || 0);
+    const voorbelasting = round2(d.rubriek5b || 0);
+    const saldo = round2(d.saldo != null ? d.saldo : verschuldigd - voorbelasting);
+    if (Math.abs(verschuldigd) < 0.005 && Math.abs(voorbelasting) < 0.005) return toast('Geen BTW in dit kwartaal om af te rekenen', 'error');
+    const bank = (state.accounts.find((a) => a.isBank) || state.accounts.find((a) => /bunq|bank/i.test(a.naam)) || {}).nummer || '';
+    const regels = [];
+    if (verschuldigd) regels.push({ rekening: '1910', debet: verschuldigd, credit: 0 }); // schuld verrekenen
+    if (voorbelasting) regels.push({ rekening: '1810', debet: 0, credit: voorbelasting }); // vordering verrekenen
+    if (saldo > 0.005) regels.push({ rekening: bank, debet: 0, credit: saldo });           // betaling aan Belastingdienst
+    else if (saldo < -0.005) regels.push({ rekening: bank, debet: -saldo, credit: 0 });     // teruggaaf van Belastingdienst
+    const teBetalen = saldo >= 0;
+    const hint = `<b>BTW-afrekening Q${kwartaal} ${jaar}.</b> Je verrekent de verschuldigde BTW (${euro(verschuldigd)} op 1910) met de voorbelasting (${euro(voorbelasting)} op 1810). Het saldo van <b>${euro(Math.abs(saldo))}</b> ${teBetalen ? 'betaal je aan' : 'ontvang je van'} de Belastingdienst via de bank. Zo lopen 1810 én 1910 weer naar 0. Controleer de bankrekening en zet de datum op de dag van ${teBetalen ? 'betaling' : 'ontvangst'}.`;
+    openMemoriaal(refresh, { hint, initial: { datum: vandaag(), omschrijving: `BTW-afrekening Q${kwartaal} ${jaar}`, regels } });
   }
 
   // ---------------- Modal: Rente rekening-courant ----------------
