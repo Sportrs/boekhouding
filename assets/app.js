@@ -184,7 +184,8 @@
           <div class="mut" style="font-size:14px;margin-top:4px">${teBetalen ? 'Te betalen' : 'Te ontvangen'}</div>
           <button class="btn btn-ghost" style="margin-top:16px" onclick="location.hash='#/btw'">Naar aangifte →</button>
         </div>
-      </div>`;
+      </div>
+      ${faqBlock('dashboard')}`;
   }
 
   // ---------------- Pagina: Facturen ----------------
@@ -199,7 +200,8 @@
         <div id="dropText"><div style="color:var(--ink)">Sleep een PDF-factuur hierheen of klik om te kiezen</div>
         <div class="mut" style="font-size:14px;margin-top:4px">De gegevens worden automatisch voorinvuld.</div></div>
         <input type="file" id="file" accept="application/pdf" style="display:none" />
-      </div>`;
+      </div>
+      ${faqBlock('facturen')}`;
     const drop = document.getElementById('drop');
     const fileInput = document.getElementById('file');
     const dropText = document.getElementById('dropText');
@@ -261,7 +263,7 @@
         <input type="date" id="to" value="${st.to}" style="width:auto" />
         ${st.from || st.to ? '<button class="linkbtn" id="wis">wissen</button>' : ''}
       </div>`;
-      view.innerHTML = pageHead('Journaal', 'Alle boekingen, nieuwste eerst.', filter) + (await load());
+      view.innerHTML = pageHead('Journaal', 'Alle boekingen, nieuwste eerst.', filter) + (await load()) + faqBlock('journaal');
       document.getElementById('memo').addEventListener('click', () => openMemoriaal(rerender));
       document.getElementById('from').addEventListener('change', (e) => { st.from = e.target.value; rerender(); });
       document.getElementById('to').addEventListener('change', (e) => { st.to = e.target.value; rerender(); });
@@ -297,7 +299,7 @@
     const html = groepen.map(([t, l]) => kaartFor(t, l)).join('');
     view.innerHTML = pageHead('Grootboek', 'Klik een rekening om de opbouw te zien (grootboekkaart).',
       `<button class="btn btn-ghost" id="renterc">Rente r/c berekenen</button>`) +
-      (html || `<div class="card p5 mut">Nog geen rekeningen.</div>`);
+      (html || `<div class="card p5 mut">Nog geen rekeningen.</div>`) + faqBlock('grootboek');
     view.querySelectorAll('[data-kaart]').forEach((el) => el.addEventListener('click', () => openKaart(el.dataset.kaart)));
     const rr = document.getElementById('renterc'); if (rr) rr.onclick = () => openRenteRC(() => pageGrootboek(view));
   }
@@ -391,7 +393,7 @@
          <div class="card"><div class="card-head"><span>Leveranciers</span><button class="btn btn-brand" id="nieuweLev">+ Leverancier</button></div>
            <div class="mut" style="padding:12px 20px 0;font-size:12px;line-height:1.5">Leg vaste leveranciers vast met een <b style="color:var(--inkdim)">zoekterm</b> (bv. ANTHROPIC), hun land, het BTW-regime en een standaard kostenrekening. Een betaling in je bankafschrift wordt dan automatisch als die leverancier herkend, zodat "Boek" meteen de juiste kostenrekening en BTW invult — minder klikken, minder fouten.</div>
            <table><thead><tr><th>Naam</th><th>Zoekterm</th><th>Land</th><th>BTW</th><th>Kostenrek.</th><th></th></tr></thead>
-           <tbody>${levRows}</tbody></table></div>`;
+           <tbody>${levRows}</tbody></table></div>${faqBlock('bank')}`;
 
       const fileEl = document.getElementById('mt940file');
       document.getElementById('mt940').onclick = () => fileEl.click();
@@ -504,7 +506,7 @@
     }
     async function rerender() {
       const tabs = `<div class="tabs page-actions">${[1, 2, 3, 4].map((q) => `<button data-q="${q}" class="${q === kwartaal ? 'active' : ''}">Q${q}</button>`).join('')}</div>`;
-      view.innerHTML = pageHead('BTW-aangifte', `Omzetbelasting per kwartaal — ${jaar}`, tabs) + (await load());
+      view.innerHTML = pageHead('BTW-aangifte', `Omzetbelasting per kwartaal — ${jaar}`, tabs) + (await load()) + faqBlock('btw');
       view.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => { kwartaal = Number(b.dataset.q); rerender(); }));
       const afdr = document.getElementById('afdracht');
       if (afdr) afdr.onclick = () => openBtwAfdracht(data, kwartaal, jaar, () => rerender());
@@ -634,7 +636,7 @@
       <div class="card"><table>
         <thead><tr><th>Deelneming</th><th>Aandeel</th><th>Status</th><th>Grootboek</th><th class="r">Boekwaarde</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
-      </table></div>`;
+      </table></div>${faqBlock('deelnemingen')}`;
 
     document.getElementById('nieuw').onclick = () => openDeelneming(null, laad);
     view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openDeelneming(lijst.find((d) => d.id === Number(b.dataset.edit)), laad));
@@ -704,11 +706,14 @@
     loon: '', overigBox1: '', woz: '', ewfPct: '0.35', hypotheekrente: '',
     dividend: '',
     spaargeld: '', beleggingen: '', schulden: '',
-    loonheffing: '', heffingskortingen: '',
+    loonheffing: '', heffingskortingen: '', hkAuto: '1',
     // Tarieven 2026 — RICHTWAARDEN, controleer op belastingdienst.nl
     b1s1: '38883', b1t1: '35.70', b1s2: '79137', b1t2: '37.56', b1t3: '49.50',
     b2grens: '68843', b2t1: '24.5', b2t2: '31',
     b3vrij: '57684', b3schuldDrempel: '3800', b3fSpaar: '1.44', b3fBeleg: '6.04', b3fSchuld: '2.62', b3tarief: '36',
+    // Heffingskortingen (schatting) — RICHTWAARDEN
+    hkAhkMax: '3362', hkAhkStart: '28406', hkAhkPct: '6.337',
+    hkArbMax: '5599', hkArbTop: '43071', hkArbAfbStart: '43071', hkArbAfbPct: '6.51',
   };
   const ibNum = (v) => { let s = String(v).trim().replace(/\s/g, ''); if (s === '') return 0; if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.'); return Number(s) || 0; };
 
@@ -749,9 +754,21 @@
         const belastbareGrondslag = Math.max(0, round2(grondslag - n(st.b3vrij)));
         const belastbaarRendement = round2(belastbareGrondslag * pct);
         const belBox3 = round2(belastbaarRendement * n(st.b3tarief) / 100);
+        // Heffingskortingen — automatisch schatten of handmatig
+        const inkomen = Math.max(0, belastbaar1);
+        const ahk = Math.max(0, round2(n(st.hkAhkMax) - Math.max(0, inkomen - n(st.hkAhkStart)) * n(st.hkAhkPct) / 100));
+        const arbInk = Math.max(0, loon + overig);
+        let arb;
+        if (arbInk <= n(st.hkArbTop)) arb = n(st.hkArbTop) > 0 ? round2(n(st.hkArbMax) * Math.min(1, arbInk / n(st.hkArbTop))) : 0;
+        else arb = Math.max(0, round2(n(st.hkArbMax) - Math.max(0, arbInk - n(st.hkArbAfbStart)) * n(st.hkArbAfbPct) / 100));
+        const autoKorting = round2(ahk + arb);
+        const autoAan = String(st.hkAuto) === '1' || st.hkAuto === true;
+        const kortingen = autoAan ? autoKorting : n(st.heffingskortingen);
+        // Als auto aanstaat: houd het invoerveld in sync zodat "Opslaan" de gebruikte waarde bewaart
+        if (autoAan) { st.heffingskortingen = String(autoKorting); const hkEl = document.querySelector('[data-k="heffingskortingen"]'); if (hkEl && document.activeElement !== hkEl) hkEl.value = autoKorting.toFixed(2); }
         // Totaal
         const voorKorting = round2(belBox1 + belBox2 + belBox3);
-        const naKorting = round2(Math.max(0, voorKorting - n(st.heffingskortingen)));
+        const naKorting = round2(Math.max(0, voorKorting - kortingen));
         const teBetalen = round2(naKorting - n(st.loonheffing));
         const bij = teBetalen >= 0;
 
@@ -767,7 +784,7 @@
             ${rij('rendementsgrondslag', grondslag, true)}
             ${rij(`forfaitair rendement (${(pct * 100).toFixed(2)}%)`, belastbaarRendement, true)}
             <tr style="border-top:1px solid var(--line)"><td style="font-weight:500;color:var(--inkdim)">Belasting vóór heffingskortingen</td><td class="num" style="color:var(--ink)">${euro(voorKorting)}</td></tr>
-            ${rij('af: heffingskortingen (schatting)', -n(st.heffingskortingen), true)}
+            ${rij('af: heffingskortingen (' + (autoAan ? 'auto: AHK ' + euro(ahk) + ' + arbeidsk. ' + euro(arb) : 'handmatig') + ')', -kortingen, true)}
             ${rij('af: reeds ingehouden loonheffing', -n(st.loonheffing), true)}
           </tbody>
           <tfoot><tr><td style="font-weight:600;color:var(--ink)">${bij ? 'Naar schatting bij te betalen' : 'Naar schatting terug te ontvangen'}</td><td class="num ${bij ? 'dan' : 'suc'}" style="font-size:18px;font-weight:700">${euro(Math.abs(teBetalen))}</td></tr></tfoot></table>`;
@@ -802,9 +819,10 @@
               ${rcHint}
             </div></div>
             <div class="card"><div class="card-head">Al betaald</div><div class="card-body" style="display:flex;flex-direction:column;gap:14px">
-              <div class="mut" style="font-size:13px">De BV houdt al loonheffing in op je salaris. Vul dat in plus een schatting van je heffingskortingen (algemene heffingskorting + arbeidskorting) — die haal je uit de voorlopige aanslag of belastingdienst.nl.</div>
+              <div class="mut" style="font-size:13px">De BV houdt al loonheffing in op je salaris. De heffingskortingen (algemene heffingskorting + arbeidskorting) schat de app automatisch op basis van je inkomen — zet het uit om ze zelf in te vullen.</div>
               ${veld('loonheffing', 'Reeds ingehouden loonheffing', '0')}
-              ${veld('heffingskortingen', 'Heffingskortingen (schatting)', '0')}
+              <label style="display:flex;gap:8px;align-items:center;font-size:14px;color:var(--inkdim)"><input type="checkbox" id="hkauto" ${String(st.hkAuto) === '1' ? 'checked' : ''} style="width:auto" /> Heffingskortingen automatisch schatten</label>
+              <label class="field"><span>Heffingskortingen</span><input class="num" data-k="heffingskortingen" value="${esc(st.heffingskortingen)}" placeholder="0" ${String(st.hkAuto) === '1' ? 'disabled' : ''} /></label>
             </div></div>
           </div>
           <div style="display:flex;flex-direction:column;gap:16px">
@@ -821,11 +839,19 @@
               <div class="row">${veld('b3vrij', 'Heffingsvrij vermogen (€)', '')}${veld('b3schuldDrempel', 'Schulddrempel (€)', '')}</div>
               <div class="row">${veld('b3fSpaar', 'Forfait spaargeld (%)', '')}${veld('b3fBeleg', 'Forfait beleggingen (%)', '')}</div>
               <div class="row">${veld('b3fSchuld', 'Forfait schulden (%)', '')}${veld('b3tarief', 'Box 3-tarief (%)', '')}</div>
+              <div class="mut" style="margin-top:6px">Heffingskortingen (auto-schatting):</div>
+              <div class="row">${veld('hkAhkMax', 'Alg. heffingskorting max (€)', '')}${veld('hkAhkStart', 'AHK afbouw vanaf (€)', '')}</div>
+              ${veld('hkAhkPct', 'AHK afbouw (%)', '')}
+              <div class="row">${veld('hkArbMax', 'Arbeidskorting max (€)', '')}${veld('hkArbTop', 'Arbeidsk. top bij (€)', '')}</div>
+              <div class="row">${veld('hkArbAfbStart', 'Arbeidsk. afbouw vanaf (€)', '')}${veld('hkArbAfbPct', 'Arbeidsk. afbouw (%)', '')}</div>
             </div></div>
           </div>
-        </div>`;
+        </div>
+        ${faqBlock('ib')}`;
 
       view.querySelectorAll('[data-k]').forEach((el) => el.oninput = () => { st[el.dataset.k] = el.value; bereken(); });
+      const hkAutoEl = document.getElementById('hkauto');
+      if (hkAutoEl) hkAutoEl.onchange = () => { st.hkAuto = hkAutoEl.checked ? '1' : '0'; const hkEl = document.querySelector('[data-k="heffingskortingen"]'); if (hkEl) hkEl.disabled = hkAutoEl.checked; bereken(); };
       document.getElementById('ibjaar').onchange = (e) => { const j = Number(e.target.value); if (j >= 2000 && j <= 2100) { jaar = j; load(); } };
       document.getElementById('ibsave').onclick = async () => {
         try { await api('ib_opslaan', { jaar, gegevens: st }, 'POST'); toast('IB-gegevens opgeslagen ✓'); } catch (e) { toast(e.message, 'error'); }
@@ -1422,6 +1448,49 @@
   // ---------------- Kleine HTML-helpers ----------------
   function pageHead(title, sub, actions) {
     return `<div class="page-head"><div><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${actions ? `<div class="page-actions">${actions}</div>` : ''}</div>`;
+  }
+
+  // ---------------- FAQ "Hoe boek ik…" ----------------
+  const FAQ = {
+    debet: { q: 'Wat betekenen debet en credit (dubbel boekhouden)?', a: 'Elke boeking heeft twee gelijke kanten. <b>Bezittingen en kosten</b> nemen toe aan de <b>debet</b>-kant; <b>schulden, eigen vermogen en opbrengsten</b> aan de <b>credit</b>-kant. De app bewaakt dat debet = credit, dus een boeking kan nooit uit balans raken.' },
+    inkoop: { q: 'Hoe boek ik een inkoopfactuur?', a: 'Ga naar <b>Facturen invoeren → Inkoop</b> en upload de PDF. De AI leest bedrag, BTW en datum. Kies de <b>kostenrekening</b> (waar gaat het over) en de <b>betaalrekening</b> (je bank). De app splitst automatisch bedrag excl. BTW + de voorbelasting op <code>1810</code>.' },
+    buitenland: { q: 'Hoe boek ik een buitenlandse leverancier (Anthropic, Hosting.com) zonder NL-BTW?', a: 'Leg de leverancier vast (Bank-pagina → Leveranciers) met het juiste <b>BTW-regime</b>: <b>geen</b> voor niet-EU (bv. VS — geen BTW, telt niet mee in de aangifte) of <b>verlegd</b> voor EU-diensten (de BTW wordt naar jou verlegd). Bij "verlegd" boekt de app de BTW zowel als verschuldigd (<code>1910</code>) als voorbelasting (<code>1810</code>) — saldo € 0 — en zet het in rubriek 4b. Kies bij de boeking hetzelfde bij "BTW".' },
+    verkoop: { q: 'Hoe boek ik een verkoopfactuur?', a: 'Ga naar <b>Facturen invoeren → Verkoop</b>, vul het bedrag excl. BTW en het tarief (21% of 9%) in. De app boekt de omzet als opbrengst en de verschuldigde BTW op <code>1910</code>.' },
+    prive: { q: 'Hoe boek ik geld dat ik vanuit GIBS naar privé haal (lenen van de BV)?', a: 'Dit is <b>geen kost</b> maar een verschuiving naar je <b>rekening-courant</b> met de BV. Op de <b>Bank</b>-pagina bij die afschrijving → <b>overboeking</b> → kies als tegenrekening je rekening-courant (bijv. <code>1310 Rekening-courant DGA</code>). Boeking: <code>DR 1310 / CR bank</code>. Je schuld aan de BV neemt toe. Stort je geld terug, dan draai je het om.' },
+    knoppen: { q: 'Wat is het verschil tussen Boek, Koppel, Overboeking en Negeer?', a: '<b>Boek</b> = een nieuwe boeking maken (factuur, upload de PDF). <b>Overboeking</b> = geen factuur maar een verschuiving (privé, BTW-betaling, geld tussen banken). <b>Koppel</b> = verbinden aan een boeking die je al had — verschijnt alléén als er een boeking met hetzelfde bedrag bestaat. <b>Negeer</b> = niet relevant.' },
+    tussenbanken: { q: 'Hoe boek ik geld tussen twee eigen bankrekeningen?', a: 'Op de <b>Bank</b>-pagina → <b>overboeking</b> → kies als tegenrekening de andere bankrekening. Er verandert niets aan je vermogen, alleen het saldo verschuift. (Zo boek je bijvoorbeeld een overboeking van je oude ING naar bunq.)' },
+    btwwerking: { q: 'Hoe werkt de BTW in deze app?', a: 'Je verkopen leveren <b>verschuldigde BTW</b> op (<code>1910</code>), je inkopen leveren <b>voorbelasting</b> op (<code>1810</code>). Per kwartaal is het saldo (1910 − 1810) je aangifte: positief = betalen, negatief = terugkrijgen.' },
+    btwafdracht: { q: 'Hoe boek ik de BTW-afdracht of -teruggaaf?', a: 'Ga naar de <b>BTW</b>-pagina, kies het kwartaal en klik <b>Afdracht boeken</b> (of Teruggaaf). De app vult een memoriaal voor: <code>DR 1910</code> (verschuldigd) en <code>CR 1810</code> (voorbelasting) worden tegen de <b>bank</b> weggeboekt, zodat beide naar € 0 lopen. Zet de datum op de dag van betaling/ontvangst.' },
+    verlegd: { q: 'Wat is "BTW verlegd" en wanneer gebruik ik dat?', a: 'Bij diensten van een <b>EU-leverancier</b> wordt de BTW naar jou verlegd: de leverancier rekent geen BTW, jij geeft die zelf aan én trekt hem in dezelfde aangifte weer af. Netto betaal je niets, maar het hoort wel in de aangifte (rubriek 4b). Kies "verlegd" bij de boeking of bij de leverancier.' },
+    memoriaal: { q: 'Wat is een memoriaalboeking?', a: 'Een vrije boeking zonder factuur of bankregel, waarbij je zelf de debet- en creditregels kiest (moet in balans zijn). Gebruik het voor correcties, afschrijvingen, rente, afwaarderingen en de BTW-afrekening. Journaal → <b>+ Memoriaal</b>.' },
+    afschrijving: { q: 'Hoe boek ik een afschrijving (bijv. inventaris)?', a: 'Journaal → <b>+ Memoriaal</b>: <code>DR Afschrijvingskosten / CR de activarekening</code> (bijv. inventaris). Op de <b>grootboekkaart</b> van die rekening zie je dan het verloop: beginsaldo + aanschaf − afschrijving = eindstand.' },
+    rcrente: { q: 'Hoe bereken en boek ik de rente op mijn rekening-courant?', a: 'De BV moet zakelijke rente rekenen over de rekening-courant met de aandeelhouder (gebruikelijk zodra de schuld boven ± € 17.500 komt). Ga naar <b>Grootboek → Rente r/c berekenen</b>: vul percentage (bv. 1,5%) en de grens in. De app rekent de rente over het saldo boven de grens en boekt <code>DR rekening-courant / CR rentebaten</code> (opbrengst, geen BTW). Maak eerst een opbrengstrekening "Rentebaten" aan.' },
+    grootboekkaart: { q: 'Hoe zie ik hoe een post is opgebouwd?', a: 'Klik op een rekening in het <b>Grootboek</b> (of op een post in het Jaarverslag). Je ziet de <b>grootboekkaart</b>: beginsaldo + alle mutaties = eindsaldo. Zo volg je bijvoorbeeld saldo + aanschaf − afschrijving, of de opbouw van een W&V-post.' },
+    deelnAfw: { q: 'Een deelneming is opgeheven of failliet — hoe verwerk ik dat?', a: 'Ga naar <b>Deelnemingen</b> → bij die deelneming <b>afwaarderen</b>. De app vult een memoriaal voor dat de boekwaarde als verlies naar € 0 boekt (<code>DR verliesrekening / CR deelneming</code>). Zet daarna de <b>status</b> op opgeheven of failliet via "bewerken".' },
+    deelnNieuw: { q: 'Hoe leg ik een nieuwe deelneming vast?', a: 'Tab <b>Deelnemingen → + Deelneming</b>: naam, aandeel, status en eventueel de gekoppelde grootboekrekening (financiële vaste activa). De aankoop zelf boek je als memoriaal of via de bank. De boekwaarde in het register komt live uit die grootboekrekening.' },
+    gebruikelijkloon: { q: 'Waarom moet ik mezelf een DGA-salaris geven?', a: 'Als DGA (aanmerkelijk belang) moet je een <b>gebruikelijk loon</b> uit de BV opnemen — richtlijn 2026 ± € 56.000. Dat is loon in <b>box 1</b>; de BV houdt er loonheffing op in. Vul dat loon in bij box 1 van de IB-module.' },
+    salarisdividend: { q: 'Salaris of dividend uitkeren?', a: '<b>Salaris</b> is box 1 (progressief belast, maar aftrekbaar in de BV). <b>Dividend</b> is box 2 (24,5%/31%, ná vennootschapsbelasting in de BV). De IB-module toont beide; de optimale mix is een fiscale afweging — bespreek die met je adviseur.' },
+    ibboxen: { q: 'Wat zit er in box 1, 2 en 3?', a: '<b>Box 1</b> = werk & woning: je DGA-loon en je eigen woning (eigenwoningforfait − hypotheekrente). <b>Box 2</b> = aanmerkelijk belang: dividend uit je BV. <b>Box 3</b> = sparen & beleggen: privévermogen (spaargeld + beleggingen − schulden), forfaitair belast.' },
+    ibtarieven: { q: 'Kloppen de tarieven in de IB-module?', a: 'De tarieven, schijven en forfaits zijn <b>richtwaarden</b> die je onderaan de pagina zelf kunt aanpassen. Controleer ze op belastingdienst.nl voor het betreffende jaar. De uitkomst is een <b>indicatie</b> — laat je echte aangifte door een adviseur toetsen.' },
+  };
+  const FAQ_PAGES = {
+    dashboard: ['debet', 'inkoop', 'prive', 'btwafdracht', 'rcrente'],
+    facturen: ['inkoop', 'buitenland', 'verkoop', 'knoppen'],
+    bank: ['prive', 'knoppen', 'btwafdracht', 'tussenbanken'],
+    btw: ['btwwerking', 'btwafdracht', 'verlegd', 'buitenland'],
+    journaal: ['memoriaal', 'afschrijving', 'rcrente', 'prive'],
+    grootboek: ['grootboekkaart', 'afschrijving', 'rcrente'],
+    deelnemingen: ['deelnAfw', 'deelnNieuw'],
+    ib: ['ibboxen', 'gebruikelijkloon', 'salarisdividend', 'ibtarieven'],
+  };
+  function faqBlock(pageKey) {
+    const keys = FAQ_PAGES[pageKey] || [];
+    if (!keys.length) return '';
+    const items = keys.map((k) => FAQ[k]).filter(Boolean);
+    return `<div class="card" style="margin-top:24px"><div class="card-head">❓ Hoe boek ik… — veelgestelde vragen</div>
+      <div class="card-body" style="display:flex;flex-direction:column;gap:6px">
+        ${items.map((f) => `<details class="faq"><summary>${esc(f.q)}</summary><div class="faq-a">${f.a}</div></details>`).join('')}
+      </div></div>`;
   }
   function stat(label, value, cls) {
     return `<div class="stat"><div class="label">${esc(label)}</div><div class="value ${cls || ''}">${value}</div></div>`;
