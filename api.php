@@ -406,6 +406,24 @@ switch ($actie) {
         prive_post_verwijder((int) ($in['id'] ?? 0));
         json_response(['ok' => true]);
 
+    case 'prive_regels':
+        json_response(prive_regels_lijst());
+
+    case 'prive_regel_opslaan':
+        json_response(prive_regel_opslaan($in));
+
+    case 'prive_regel_verwijder':
+        prive_regel_verwijder((int) ($in['id'] ?? 0));
+        json_response(['ok' => true]);
+
+    case 'prive_regels_toepassen':
+        json_response(prive_regels_toepassen());
+
+    case 'prive_maandcijfers': {
+        $jaar = (int) ($in['jaar'] ?? 0) ?: (int) date('Y');
+        json_response(prive_maandcijfers($jaar));
+    }
+
     case 'grootboekkaart': {
         $nr = trim((string) ($in['nummer'] ?? ''));
         if ($nr === '') json_response(['fout' => 'nummer vereist'], 422);

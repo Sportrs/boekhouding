@@ -118,6 +118,7 @@
     { hash: '#/prive', label: 'Overzicht', ic: '▤', page: privOverzicht },
     { hash: '#/prive/rekeningen', label: 'Rekeningen', ic: '⇄', page: privRekeningen },
     { hash: '#/prive/transacties', label: 'Transacties', ic: '≣', page: privTransacties },
+    { hash: '#/prive/maand', label: 'Per maand', ic: '▦', page: privMaand },
     { hash: '#/prive/posten', label: 'Te ontvangen / betalen', ic: '◈', page: privPosten },
     { hash: '#/prive/categorieen', label: 'Categorieën', ic: '☰', page: privCategorieen },
   ];
@@ -934,6 +935,30 @@
     document.getElementById('pjaar').onchange = (e) => { const j = Number(e.target.value); if (j >= 2000 && j <= 2100) { priveJaar = j; laad(); } };
   }
 
+  async function privMaand(view) {
+    const laad = () => privMaand(view);
+    let d;
+    try { d = await api('prive_maandcijfers', { jaar: priveJaar }); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    const M = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+    const cel = (v) => `<td class="num ${v < 0 ? 'dan' : v > 0 ? 'suc' : 'mut'}">${v ? euro0(v) : '·'}</td>`;
+    const rij = (naam, arr, totaal, cls) => `<tr><td style="${cls || ''}white-space:nowrap">${naam}</td>${arr.map(cel).join('')}<td class="num" style="font-weight:600;color:var(--ink)">${totaal ? euro0(totaal) : '·'}</td></tr>`;
+    view.innerHTML = pageHead('Per maand', 'Vergelijk je uitgaven en inkomsten maand voor maand.') + `
+      <div class="page-actions" style="margin-bottom:12px"><label class="mut" style="font-size:13px">Jaar:</label> <input type="number" id="pjaar" value="${priveJaar}" style="width:96px" /></div>
+      <div class="card" style="overflow:hidden"><div style="overflow-x:auto"><table class="compact">
+        <thead><tr><th>Categorie</th>${M.map((m) => `<th class="r">${m}</th>`).join('')}<th class="r">Totaal</th></tr></thead>
+        <tbody>
+        ${d.categorieen.length ? d.categorieen.map((c) => rij(esc(c.naam), c.perMaand, c.totaal, 'color:var(--ink);')).join('') : `<tr><td colspan="14" class="empty">Geen transacties in ${priveJaar}.</td></tr>`}
+        </tbody>
+        <tfoot>
+          ${rij('Uitgaven', d.uitgavenPerMaand, d.totaalUitgaven, 'font-weight:600;color:var(--inkdim);')}
+          ${rij('Inkomsten', d.inkomstenPerMaand, d.totaalInkomsten, 'font-weight:600;color:var(--inkdim);')}
+          ${rij('Saldo', d.saldoPerMaand, round2(d.totaalInkomsten + d.totaalUitgaven), 'font-weight:600;color:var(--inkdim);')}
+        </tfoot>
+      </table></div></div>
+      <div class="mut" style="font-size:12px;margin-top:10px">Bedragen zijn gewogen naar het aandeel van de rekening (een gedeelde rekening telt voor jouw deel). <span class="dan">Rood</span> = uitgave, <span class="suc">groen</span> = inkomst.</div>`;
+    document.getElementById('pjaar').onchange = (e) => { const j = Number(e.target.value); if (j >= 2000 && j <= 2100) { priveJaar = j; laad(); } };
+  }
+
   async function privRekeningen(view) {
     const laad = () => privRekeningen(view);
     let rek;
@@ -1015,16 +1040,44 @@
 
   async function privCategorieen(view) {
     const laad = () => privCategorieen(view);
-    let cats;
-    try { cats = await api('prive_categorieen'); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    let cats, regels;
+    try { [cats, regels] = await Promise.all([api('prive_categorieen'), api('prive_regels')]); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
     view.innerHTML = pageHead('Categorieën', 'Groepeer je uitgaven en inkomsten.', `<button class="btn btn-brand" id="nieuwCat">+ Categorie</button>`) +
       `<div class="help" style="margin-bottom:16px">Categorieën bepalen hoe je uitgaven en inkomsten worden gegroepeerd. Wijs ze toe bij Transacties; met "onthoud" leert de app ze automatisch toe te kennen bij een volgende import.</div>
         <div class="card"><table class="compact"><thead><tr><th>Categorie</th><th>Soort</th><th></th></tr></thead><tbody>
         ${cats.map((c) => `<tr><td style="color:var(--ink)">${esc(c.naam)}</td><td>${c.soort === 'inkomst' ? '<span class="suc">inkomst</span>' : '<span class="mut">uitgave</span>'}</td><td class="r"><button class="linkbtn" data-edit="${c.id}">bewerken</button> <button class="linkbtn del" data-del="${c.id}">✕</button></td></tr>`).join('')}
-        </tbody></table></div>`;
+        </tbody></table></div>
+        <div class="card" style="margin-top:24px"><div class="card-head"><span>Automatische regels</span><div style="display:flex;gap:8px"><button class="btn btn-ghost" id="pasToe">Regels toepassen</button><button class="btn btn-brand" id="nieuwRegel">+ Regel</button></div></div>
+          <div class="mut" style="padding:12px 20px 0;font-size:12px;line-height:1.5">Een regel koppelt een <b style="color:var(--inkdim)">zoekterm</b> (die in de tegenpartij of omschrijving voorkomt) aan een categorie, zodat transacties bij import automatisch worden gecategoriseerd. Deze regels ontstaan ook vanzelf als je bij een transactie "onthoud" aanvinkt. <b style="color:var(--inkdim)">Regels toepassen</b> categoriseert bestaande, nog ongecategoriseerde transacties alsnog.</div>
+          <table class="compact"><thead><tr><th>Zoekterm</th><th>Categorie</th><th></th></tr></thead><tbody>
+          ${regels.length ? regels.map((r) => `<tr><td style="color:var(--ink)">${esc(r.zoekterm)}</td><td>${esc(r.categorie_naam)}</td><td class="r"><button class="linkbtn" data-regel-edit="${r.id}">bewerken</button> <button class="linkbtn del" data-regel-del="${r.id}">✕</button></td></tr>`).join('') : '<tr><td colspan="3" class="empty">Nog geen regels.</td></tr>'}
+          </tbody></table></div>`;
     document.getElementById('nieuwCat').onclick = () => openPriveCategorie(null, laad);
     view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveCategorie(cats.find((x) => x.id === Number(b.dataset.edit)), laad));
     view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Categorie verwijderen? Transacties blijven bestaan maar verliezen deze categorie.')) return; await api('prive_categorie_verwijder', { id: Number(b.dataset.del) }, 'POST'); laad(); });
+    document.getElementById('nieuwRegel').onclick = () => openPriveRegel(null, cats, laad);
+    view.querySelectorAll('[data-regel-edit]').forEach((b) => b.onclick = () => openPriveRegel(regels.find((x) => x.id === Number(b.dataset.regelEdit)), cats, laad));
+    view.querySelectorAll('[data-regel-del]').forEach((b) => b.onclick = async () => { if (!confirm('Regel verwijderen?')) return; await api('prive_regel_verwijder', { id: Number(b.dataset.regelDel) }, 'POST'); laad(); });
+    document.getElementById('pasToe').onclick = async () => { try { const r = await api('prive_regels_toepassen', {}, 'POST'); toast(`${r.bijgewerkt} transactie(s) gecategoriseerd`); laad(); } catch (e) { toast(e.message, 'error'); } };
+  }
+
+  function openPriveRegel(regel, cats, refresh) {
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>${regel ? 'Regel bewerken' : 'Nieuwe regel'}</h2><button class="x">✕</button></div>
+      <div class="modal-body">
+        <div class="help">Komt de <b>zoekterm</b> voor in de tegenpartij of omschrijving van een transactie, dan krijgt die automatisch de gekozen categorie. Hoofdletters maken niet uit. Houd de zoekterm generiek (bv. <code>Albert Heijn</code>, niet met filiaalnummer).</div>
+        <label class="field"><span>Zoekterm</span><input id="zoek" value="${esc(regel ? regel.zoekterm : '')}" placeholder="bijv. Albert Heijn" /></label>
+        <label class="field"><span>Categorie</span><select id="cat"><option value="">— kies —</option>${cats.map((c) => `<option value="${c.id}" ${regel && regel.categorie_id === c.id ? 'selected' : ''}>${esc(c.naam)}</option>`).join('')}</select></label>
+      </div>
+      <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Opslaan</button></div></div>`;
+    ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
+    ov.querySelector('#opslaan').onclick = async () => {
+      const body = { id: regel ? regel.id : 0, zoekterm: ov.querySelector('#zoek').value, categorieId: Number(ov.querySelector('#cat').value) || 0 };
+      if (!body.zoekterm.trim()) return toast('Zoekterm is verplicht', 'error');
+      if (!body.categorieId) return toast('Kies een categorie', 'error');
+      try { await api('prive_regel_opslaan', body, 'POST'); toast('Opgeslagen ✓'); close(); refresh(); } catch (e) { toast(e.message, 'error'); }
+    };
   }
 
   function openPriveRekening(rek, refresh) {

@@ -97,7 +97,7 @@ function prive_categorie_raden(string $naam, string $oms): ?int {
 }
 
 /* Onthoud: koppel een zoekterm aan een categorie (voor toekomstige import). */
-function prive_regel_opslaan(string $zoekterm, int $categorieId): void {
+function prive_regel_onthoud(string $zoekterm, int $categorieId): void {
     $zoekterm = trim($zoekterm);
     if ($zoekterm === '' || $categorieId <= 0) return;
     // Voorkom exacte duplicaten.
@@ -105,6 +105,48 @@ function prive_regel_opslaan(string $zoekterm, int $categorieId): void {
     $q->execute([':z' => $zoekterm, ':c' => $categorieId]);
     if ($q->fetch()) return;
     db()->prepare("INSERT INTO prive_regels (zoekterm, categorie_id) VALUES (:z,:c)")->execute([':z' => $zoekterm, ':c' => $categorieId]);
+}
+
+/* Beheer van auto-categorisatieregels. */
+function prive_regels_lijst(): array {
+    $rows = db()->query(
+        "SELECT r.id, r.zoekterm, r.categorie_id, c.naam AS categorie_naam, c.soort AS categorie_soort
+         FROM prive_regels r JOIN prive_categorieen c ON c.id = r.categorie_id
+         ORDER BY r.zoekterm"
+    )->fetchAll();
+    foreach ($rows as &$x) { $x['id'] = (int) $x['id']; $x['categorie_id'] = (int) $x['categorie_id']; }
+    return $rows;
+}
+
+function prive_regel_opslaan(array $in): array {
+    $zoek = trim((string) ($in['zoekterm'] ?? ''));
+    if ($zoek === '') json_response(['fout' => 'Zoekterm is verplicht'], 422);
+    $cat = (int) ($in['categorieId'] ?? 0);
+    if ($cat <= 0) json_response(['fout' => 'Kies een categorie'], 422);
+    $id = (int) ($in['id'] ?? 0);
+    if ($id > 0) {
+        db()->prepare("UPDATE prive_regels SET zoekterm=:z, categorie_id=:c WHERE id=:id")->execute([':z' => $zoek, ':c' => $cat, ':id' => $id]);
+    } else {
+        db()->prepare("INSERT INTO prive_regels (zoekterm, categorie_id) VALUES (:z,:c)")->execute([':z' => $zoek, ':c' => $cat]);
+        $id = (int) db()->lastInsertId();
+    }
+    return ['ok' => true, 'id' => $id];
+}
+
+function prive_regel_verwijder(int $id): void {
+    db()->prepare("DELETE FROM prive_regels WHERE id = :id")->execute([':id' => $id]);
+}
+
+/* Pas alle regels toe op nog ongecategoriseerde transacties. */
+function prive_regels_toepassen(): array {
+    $tx = db()->query("SELECT id, tegenrekening_naam, omschrijving FROM prive_transacties WHERE categorie_id IS NULL")->fetchAll();
+    $upd = db()->prepare("UPDATE prive_transacties SET categorie_id = :c WHERE id = :id");
+    $n = 0;
+    foreach ($tx as $t) {
+        $c = prive_categorie_raden((string) $t['tegenrekening_naam'], (string) $t['omschrijving']);
+        if ($c) { $upd->execute([':c' => $c, ':id' => $t['id']]); $n++; }
+    }
+    return ['ok' => true, 'bijgewerkt' => $n];
 }
 
 // --- Transacties -----------------------------------------------------
@@ -167,7 +209,7 @@ function prive_transactie_categorie(int $id, ?int $categorieId, bool $onthoud): 
         // een generieke regel "ALBERT HEIJN" wordt die ook op andere filialen matcht.
         $term = trim((string) preg_replace('/\s+\d[\d\s\/.\-*]*$/u', '', $naam));
         if (mb_strlen($term) < 3) $term = $naam;
-        if ($term !== '') prive_regel_opslaan($term, $categorieId);
+        if ($term !== '') prive_regel_onthoud($term, $categorieId);
     }
     return ['ok' => true];
 }
@@ -300,5 +342,62 @@ function prive_overzicht(string $from, string $to): array {
         'inkomsten'   => centen($inkomsten),
         'uitgaven'    => centen($uitgaven),
         'perCategorie' => $cats,
+    ];
+}
+
+/* Maand-op-maand: per categorie 12 maanden + totalen (gewogen naar aandeel). */
+function prive_maandcijfers(int $jaar): array {
+    $q = db()->prepare(
+        "SELECT MONTH(t.datum) AS m, t.bedrag * r.aandeel / 100 AS bedrag, c.naam AS cat, c.soort AS catsoort
+         FROM prive_transacties t
+         JOIN prive_rekeningen r ON r.id = t.rekening_id
+         LEFT JOIN prive_categorieen c ON c.id = t.categorie_id
+         WHERE YEAR(t.datum) = :j"
+    );
+    $q->execute([':j' => $jaar]);
+
+    $ink = array_fill(1, 12, 0.0);
+    $uit = array_fill(1, 12, 0.0);
+    $cats = [];
+    foreach ($q->fetchAll() as $row) {
+        $m = (int) $row['m'];
+        $b = (float) $row['bedrag'];
+        if ($b >= 0) $ink[$m] += $b; else $uit[$m] += $b;
+        $key = $row['cat'] ?: 'Ongecategoriseerd';
+        if (!isset($cats[$key])) {
+            $cats[$key] = ['naam' => $key, 'soort' => $row['catsoort'] ?: ($b >= 0 ? 'inkomst' : 'uitgave'), 'perMaand' => array_fill(1, 12, 0.0), 'totaal' => 0.0];
+        }
+        $cats[$key]['perMaand'][$m] += $b;
+        $cats[$key]['totaal'] += $b;
+    }
+
+    $lijst = array_values($cats);
+    usort($lijst, function ($a, $b) {
+        $au = $a['totaal'] < 0 ? 0 : 1;   // uitgaven eerst
+        $bu = $b['totaal'] < 0 ? 0 : 1;
+        if ($au !== $bu) return $au - $bu;
+        return abs($b['totaal']) <=> abs($a['totaal']);
+    });
+
+    $reeks = function (array $assoc): array {
+        $out = [];
+        for ($m = 1; $m <= 12; $m++) $out[] = centen($assoc[$m]);
+        return $out;
+    };
+    $categorieen = [];
+    foreach ($lijst as $c) {
+        $categorieen[] = ['naam' => $c['naam'], 'soort' => $c['soort'], 'perMaand' => $reeks($c['perMaand']), 'totaal' => centen($c['totaal'])];
+    }
+    $saldo = [];
+    for ($m = 1; $m <= 12; $m++) $saldo[] = centen($ink[$m] + $uit[$m]);
+
+    return [
+        'jaar' => $jaar,
+        'categorieen' => $categorieen,
+        'inkomstenPerMaand' => $reeks($ink),
+        'uitgavenPerMaand'  => $reeks($uit),
+        'saldoPerMaand'     => $saldo,
+        'totaalInkomsten'   => centen(array_sum($ink)),
+        'totaalUitgaven'    => centen(array_sum($uit)),
     ];
 }
