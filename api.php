@@ -397,6 +397,7 @@ switch ($actie) {
             'rekening' => $in['rekening'] ?? null, 'from' => $in['from'] ?? null, 'to' => $in['to'] ?? null,
             'categorie' => $in['categorie'] ?? null, 'ongecategoriseerd' => $in['ongecategoriseerd'] ?? null,
             'gecategoriseerd' => $in['gecategoriseerd'] ?? null,
+            'limit' => $in['limit'] ?? null, 'offset' => $in['offset'] ?? null,
         ]));
 
     case 'prive_transacties_tellingen':

@@ -151,18 +151,27 @@ function prive_regels_toepassen(): array {
 
 // --- Transacties -----------------------------------------------------
 function prive_transacties_lijst(array $f): array {
+    $where = " WHERE 1=1";
+    $p = [];
+    if (!empty($f['rekening'])) { $where .= " AND t.rekening_id = :rek"; $p[':rek'] = (int) $f['rekening']; }
+    if (!empty($f['from']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $f['from'])) { $where .= " AND t.datum >= :from"; $p[':from'] = $f['from']; }
+    if (!empty($f['to']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $f['to'])) { $where .= " AND t.datum <= :to"; $p[':to'] = $f['to']; }
+    if (!empty($f['categorie'])) { $where .= " AND t.categorie_id = :cat"; $p[':cat'] = (int) $f['categorie']; }
+    if (!empty($f['ongecategoriseerd'])) { $where .= " AND t.categorie_id IS NULL"; }
+    if (!empty($f['gecategoriseerd'])) { $where .= " AND t.categorie_id IS NOT NULL"; }
+
+    $cq = db()->prepare("SELECT COUNT(*) FROM prive_transacties t" . $where);
+    $cq->execute($p);
+    $total = (int) $cq->fetchColumn();
+
+    $limit = isset($f['limit']) && (int) $f['limit'] > 0 ? min(1000, (int) $f['limit']) : 1000;
+    $offset = isset($f['offset']) && (int) $f['offset'] > 0 ? (int) $f['offset'] : 0;
+
     $sql = "SELECT t.*, c.naam AS categorie_naam, c.soort AS categorie_soort, r.naam AS rekening_naam, r.aandeel AS rekening_aandeel
             FROM prive_transacties t
             LEFT JOIN prive_categorieen c ON c.id = t.categorie_id
-            LEFT JOIN prive_rekeningen r ON r.id = t.rekening_id WHERE 1=1";
-    $p = [];
-    if (!empty($f['rekening'])) { $sql .= " AND t.rekening_id = :rek"; $p[':rek'] = (int) $f['rekening']; }
-    if (!empty($f['from']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $f['from'])) { $sql .= " AND t.datum >= :from"; $p[':from'] = $f['from']; }
-    if (!empty($f['to']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $f['to'])) { $sql .= " AND t.datum <= :to"; $p[':to'] = $f['to']; }
-    if (!empty($f['categorie'])) { $sql .= " AND t.categorie_id = :cat"; $p[':cat'] = (int) $f['categorie']; }
-    if (!empty($f['ongecategoriseerd'])) { $sql .= " AND t.categorie_id IS NULL"; }
-    if (!empty($f['gecategoriseerd'])) { $sql .= " AND t.categorie_id IS NOT NULL"; }
-    $sql .= " ORDER BY t.datum DESC, t.id DESC LIMIT 1000";
+            LEFT JOIN prive_rekeningen r ON r.id = t.rekening_id"
+        . $where . " ORDER BY t.datum DESC, t.id DESC LIMIT $limit OFFSET $offset";
     $q = db()->prepare($sql);
     $q->execute($p);
     $rows = $q->fetchAll();
@@ -191,7 +200,7 @@ function prive_transacties_lijst(array $f): array {
         }
         unset($r['ruw']);
     }
-    return $rows;
+    return ['items' => $rows, 'total' => $total];
 }
 
 /* Aantallen voor de tabs: alles / zonder categorie / met categorie. */
