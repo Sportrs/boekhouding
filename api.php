@@ -18,6 +18,7 @@ require __DIR__ . '/includes/deelnemingen.php';
 require __DIR__ . '/includes/ib.php';
 require __DIR__ . '/includes/prive.php';
 require __DIR__ . '/includes/csv_ing.php';
+require __DIR__ . '/includes/xaf.php';
 
 set_exception_handler(function (Throwable $e): void {
     error_log('Boekhouding fout: ' . $e->getMessage());
@@ -470,6 +471,24 @@ switch ($actie) {
     }
 
     // ---------------- Reset ----------------
+    // XAF-import (auditbestand van de accountant): vervangt de BV-administratie.
+    case 'xaf_importeren': {
+        if (($in['bevestig'] ?? '') !== 'XAF') json_response(['fout' => 'Bevestiging ontbreekt'], 422);
+        $xml = (string) ($in['bestand'] ?? '');
+        if (strlen($xml) < 100) json_response(['fout' => 'Geen bestand ontvangen'], 422);
+        $cutoff = (isset($in['cutoff']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $in['cutoff'])) ? (string) $in['cutoff'] : '2026-07-01';
+        try {
+            json_response(xaf_importeer($xml, $cutoff));
+        } catch (RuntimeException $e) {
+            json_response(['fout' => $e->getMessage()], 422);
+        }
+    }
+
+    case 'prive_reset': {
+        if (($in['bevestig'] ?? '') !== 'PRIVE') json_response(['fout' => 'Bevestiging ontbreekt'], 422);
+        json_response(prive_reset());
+    }
+
     case 'reset': {
         if (($in['bevestig'] ?? '') !== 'RESET') json_response(['fout' => 'Bevestiging ontbreekt'], 422);
         db()->exec("DELETE FROM transactie_regels");

@@ -79,6 +79,16 @@ Doe daarna stap 4 (`config.php` in `public_html/boekhouding/`) en open dan
 
 Klaar — `config.php` en je data blijven staan.
 
+### XAF-import (boekhouding van de accountant)
+
+Op de **Import**-pagina kun je een **XAF-auditbestand** (XML Auditfile Financieel,
+bv. uit Exact Online) uploaden. Dat vervangt de BV-administratie door het complete
+rekeningschema, de beginbalans en alle journaalposten uit het bestand (standaard
+t/m de dag vóór "jij boekt zelf vanaf"). Daarna kun je een jaarrekening-PDF met de
+optie **"alleen vergelijkende cijfers"** importeren zonder de XAF-beginbalans te
+overschrijven. De privéboekhouding heeft een eigen **"Schone lei"**-knop (tab
+Privé → Rekeningen). Geen migratie nodig voor deze functies.
+
 ### Database-migraties
 
 Nieuwe features kunnen tabellen toevoegen. Draai bij zo'n update eenmalig het

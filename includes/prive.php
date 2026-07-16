@@ -373,6 +373,16 @@ function prive_post_verwijder(int $id): void {
     db()->prepare("DELETE FROM prive_posten WHERE id = :id")->execute([':id' => $id]);
 }
 
+/* Volledige schone lei voor de privéboekhouding: wist rekeningen, transacties,
+ * posten en regels. Categorieën blijven staan. */
+function prive_reset(): array {
+    db()->exec("DELETE FROM prive_transacties");
+    db()->exec("DELETE FROM prive_posten");
+    db()->exec("DELETE FROM prive_regels");
+    db()->exec("DELETE FROM prive_rekeningen");
+    return ['ok' => true];
+}
+
 // --- Overzicht (vermogen + uitgaven per categorie) -------------------
 function prive_overzicht(string $from, string $to): array {
     $rek = prive_rekeningen_lijst();

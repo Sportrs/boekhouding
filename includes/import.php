@@ -128,6 +128,9 @@ function import_jaarrekening_commit(array $in): array {
     $boekjaar = (int) ($in['boekjaar'] ?? 0);
     $vorig    = (int) ($in['vergelijkingsjaar'] ?? ($boekjaar - 1));
     if ($boekjaar < 2000) throw new RuntimeException('Ongeldig boekjaar.');
+    // Alleen vergelijkende cijfers: rekeningschema + beginbalans niet aanraken
+    // (bv. wanneer die al uit een XAF-import komen).
+    $alleenVergelijkend = !empty($in['alleenVergelijkend']);
 
     $balans = is_array($in['balans'] ?? null) ? $in['balans'] : [];
     $wenv   = is_array($in['wenv'] ?? null) ? $in['wenv'] : [];
@@ -159,11 +162,12 @@ function import_jaarrekening_commit(array $in): array {
     // 2) Rekeningschema + beginbalansen.
     //    De jaarrekening is de enige bron van de beginbalans: wis eerst alle
     //    oude beginsaldi, zodat een her-import geen dubbele posten oplevert.
+    $aangemaakt = 0;
+    if (!$alleenVergelijkend) {
     db()->exec("UPDATE rekeningen SET opening_saldo = 0");
     $ins = db()->prepare("INSERT INTO rekeningen (nummer, naam, type, systeem, opening_saldo)
                           VALUES (:nr, :naam, :type, 0, :saldo)
                           ON DUPLICATE KEY UPDATE naam = VALUES(naam), opening_saldo = VALUES(opening_saldo)");
-    $aangemaakt = 0;
     $importedNrs = [];
     foreach ([['balans', $balans, true], ['wenv', $wenv, false]] as [$soort, $lijst, $isBalans]) {
         foreach ($lijst as $p) {
@@ -200,6 +204,7 @@ function import_jaarrekening_commit(array $in): array {
     // Markeer bank-/kasrekeningen (liquide middelen) automatisch, zodat het
     // banksaldo en "betaald via" ze herkennen ook zonder "bank" in de naam.
     db()->exec("UPDATE rekeningen SET is_bank = 1 WHERE type = 'actief' AND (naam LIKE '%bank%' OR naam LIKE '%bunq%' OR naam LIKE '%ING%' OR naam LIKE '%liquide%' OR naam LIKE '%kas%' OR naam LIKE '%giro%')");
+    } // einde !$alleenVergelijkend
 
     // 3) Toelichtingen (verloop) + deelnemingen — vervang voor het boekjaar.
     db()->prepare("DELETE FROM toelichtingen WHERE jaar = :j")->execute([':j' => $boekjaar]);

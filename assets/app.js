@@ -1012,7 +1012,7 @@
     const laad = () => privRekeningen(view);
     let rek;
     try { rek = await api('prive_rekeningen'); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
-    view.innerHTML = pageHead('Rekeningen', 'Je privérekeningen, saldo en bankimport.', `<button class="btn btn-brand" id="nieuwRek">+ Rekening</button>`) +
+    view.innerHTML = pageHead('Rekeningen', 'Je privérekeningen, saldo en bankimport.', `<button class="btn btn-danger" id="priveReset">Schone lei…</button><button class="btn btn-brand" id="nieuwRek">+ Rekening</button>`) +
       `<div class="help" style="margin-bottom:16px">Maak per rekening een regel aan (met <b>beginsaldo</b>) en klik <b>importeer</b> voor je afschrift — <b>ING CSV</b> (<code>.csv</code>) of <b>MT940</b> (<code>.sta</code>, o.a. bunq) worden automatisch herkend. Er worden <b>alleen nieuwe betalingen</b> toegevoegd; dubbele (bij een zelfde of overlappend bestand) worden automatisch genegeerd. Ook bezittingen (auto, beleggingen) kun je als rekening toevoegen. Bij een <b>gedeelde rekening</b> zet je je <b>aandeel</b> (bv. 50%) — dan telt alleen jouw deel mee in je vermogen en uitgaven.</div>
         <div class="card"><table class="compact"><thead><tr><th>Naam</th><th>Soort</th><th>IBAN</th><th class="r">Aandeel</th><th class="r">Saldo</th><th></th></tr></thead><tbody>
         ${rek.length ? rek.map((r) => `<tr><td style="color:var(--ink)">${esc(r.naam)}</td><td>${PRIVE_REK_SOORT[r.soort] || r.soort}</td><td class="mut">${esc(r.iban || '')}</td><td class="num">${r.aandeel}%</td><td class="num" style="color:var(--ink)">${euro(r.saldo)}${r.aandeel < 100 ? `<div class="mut" style="font-size:11px">jouw deel ${euro(r.aandeelSaldo)}</div>` : ''}</td>
@@ -1020,6 +1020,10 @@
         </tbody></table></div>
         <input type="file" id="mtfile" accept=".sta,.csv,.txt,text/plain" style="display:none" />`;
     document.getElementById('nieuwRek').onclick = () => openPriveRekening(null, laad);
+    document.getElementById('priveReset').onclick = async () => {
+      if (!confirm('Schone lei: dit verwijdert AL je privérekeningen, transacties, posten en herken-regels (je categorieën blijven). Daarna kun je opnieuw importeren vanaf 1 januari.\n\nDoorgaan?')) return;
+      try { await api('prive_reset', { bevestig: 'PRIVE' }, 'POST'); toast('Privéboekhouding gewist — schone lei ✓'); laad(); } catch (e) { toast(e.message, 'error'); }
+    };
     view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveRekening(rek.find((x) => x.id === Number(b.dataset.edit)), laad));
     view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Rekening én alle bijbehorende transacties verwijderen?')) return; try { await api('prive_rekening_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Verwijderd'); laad(); } catch (e) { toast(e.message, 'error'); } });
     const mtfile = document.getElementById('mtfile'); let impRek = 0;
@@ -1424,6 +1428,7 @@
           <label class="field" style="max-width:280px"><span>Compensabel verlies (memo)</span><input class="num" id="verlies" value="${data.compensabeleVerliezen || 0}" /></label>
         </div>
         ${onbalansHint}
+        <label class="mut" style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;max-width:680px;line-height:1.5"><input type="checkbox" id="alleenVergelijkend" ${data.alleenVergelijkend ? 'checked' : ''} style="width:auto;margin-top:2px" /> <span>Alleen vergelijkende cijfers overnemen — <b>rekeningschema en beginbalans niet wijzigen</b>. Zet dit aan als je de boekhouding al met een XAF-bestand hebt opgezet; dan gebruik je deze jaarrekening alleen voor de vergelijkende kolommen in het jaarverslag.</span></label>
         <div style="display:flex;gap:8px;margin-top:12px">
           <button class="btn btn-success" id="importeer">Importeren ✓</button>
         </div>`;
@@ -1451,6 +1456,7 @@
       }));
       document.getElementById('opnieuw').addEventListener('click', () => { data = null; renderUpload(); });
       document.getElementById('verlies').addEventListener('change', (e) => { data.compensabeleVerliezen = Number(String(e.target.value).replace(',', '.')) || 0; });
+      document.getElementById('alleenVergelijkend').addEventListener('change', (e) => { data.alleenVergelijkend = e.target.checked; });
       document.getElementById('importeer').addEventListener('click', importeer);
     }
 
@@ -1462,7 +1468,7 @@
       }
       try {
         const r = await api('jaarrekening_importeren', data, 'POST');
-        toast(`Geïmporteerd ✓ — ${r.rekeningen} rekeningen, beginbalans ${Number(r.boekjaar) + 1}`);
+        toast(data.alleenVergelijkend ? 'Vergelijkende cijfers geïmporteerd ✓' : `Geïmporteerd ✓ — ${r.rekeningen} rekeningen, beginbalans ${Number(r.boekjaar) + 1}`);
         await loadSettings();
         renderShell();
         location.hash = '#/jaarverslag';
@@ -1471,11 +1477,41 @@
 
     function renderUpload() {
       view.innerHTML =
-        pageHead('Import', 'Lees de jaarrekening van vorig jaar in om beginbalansen, rekeningschema en vergelijkende cijfers over te nemen.') +
-        `<div class="card dropzone" id="drop"><div class="big">📑</div>
+        pageHead('Import', 'Zet de boekhouding op vanuit het XAF-auditbestand van je accountant, of lees een jaarrekening-PDF in voor vergelijkende cijfers.') +
+        `<div class="card p5" style="margin-bottom:20px">
+          <div style="font-weight:600;color:var(--ink);margin-bottom:6px">1 · XAF-auditbestand (rekeningschema + beginbalans + alle boekingen)</div>
+          <div class="help" style="margin-bottom:12px">Het <b>XAF</b> (XML Auditfile Financieel, bv. uit Exact Online) bevat je volledige rekeningschema, de beginbalans per 1 januari én alle journaalposten. Hiermee zet je de hele BV-boekhouding in één keer op. <b>Let op:</b> dit <b>vervangt</b> de huidige BV-administratie (rekeningen + boekingen). Je privéboekhouding blijft ongemoeid.</div>
+          <label class="field" style="max-width:220px;margin-bottom:6px"><span>Jij boekt zelf vanaf</span><input type="date" id="xafCutoff" value="2026-07-01" /></label>
+          <div class="mut" style="font-size:12px;margin-bottom:12px">Boekingen vóór deze datum worden geïmporteerd; latere (vooruit geboekte) posten worden overgeslagen zodat ze niet botsen met je eigen boekingen vanaf die datum.</div>
+          <button class="btn btn-brand" id="xafKies">XAF-bestand kiezen…</button>
+          <input type="file" id="xafFile" accept=".xaf,.xml,text/xml" style="display:none" />
+          <div id="xafStatus" style="margin-top:12px"></div>
+        </div>
+        <div class="card p5">
+          <div style="font-weight:600;color:var(--ink);margin-bottom:8px">2 · Jaarrekening-PDF (optioneel — vergelijkende cijfers 2024/2025)</div>
+          <div class="dropzone" id="drop"><div class="big">📑</div>
           <div id="dropText"><div style="color:var(--ink)">Sleep de jaarrekening-PDF hierheen of klik om te kiezen</div>
           <div class="mut" style="font-size:14px;margin-top:4px">De AI leest balans + W&V uit; jij controleert vóór importeren.</div></div>
-          <input type="file" id="file" accept="application/pdf" style="display:none" /></div>`;
+          <input type="file" id="file" accept="application/pdf" style="display:none" /></div>
+        </div>`;
+      const xafFile = document.getElementById('xafFile');
+      document.getElementById('xafKies').onclick = () => xafFile.click();
+      xafFile.onchange = async () => {
+        const f = xafFile.files[0]; if (!f) return;
+        const cutoff = document.getElementById('xafCutoff').value || '2026-07-01';
+        if (!confirm('Let op: dit VERVANGT je huidige BV-boekhouding (rekeningen + boekingen) door de inhoud van het XAF-bestand.\n\nDoorgaan?')) { xafFile.value = ''; return; }
+        const st = document.getElementById('xafStatus');
+        st.innerHTML = '<div class="brand">Bezig met importeren…</div>';
+        try {
+          const tekst = await f.text();
+          const r = await api('xaf_importeren', { bevestig: 'XAF', bestand: tekst, cutoff }, 'POST');
+          state.accounts = [];
+          await loadSettings().catch(() => {});
+          st.innerHTML = `<div class="help" style="border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.1)">✓ Geïmporteerd: <b>${r.rekeningen}</b> rekeningen en <b>${r.boekingen}</b> boekingen (${r.regels} regels), van ${datumNL(r.van)} t/m ${datumNL(r.tot)}. ${r.overgeslagen} latere posten overgeslagen.${r.onbekendeRekeningen && r.onbekendeRekeningen.length ? ' Aangemaakte onbekende rekeningen: ' + r.onbekendeRekeningen.join(', ') + '.' : ''} Bekijk het <a href="#/grootboek" style="color:var(--brand)">grootboek</a>, de <a href="#/jaarverslag" style="color:var(--brand)">balans</a> of pas rekeningtypes aan bij <a href="#/instellingen" style="color:var(--brand)">Instellingen</a>.</div>`;
+          toast('XAF geïmporteerd ✓');
+        } catch (e) { st.innerHTML = `<div class="dan">${esc(e.message)}</div>`; toast(e.message, 'error'); }
+        finally { xafFile.value = ''; }
+      };
       const drop = document.getElementById('drop');
       const fi = document.getElementById('file');
       const dt = document.getElementById('dropText');
