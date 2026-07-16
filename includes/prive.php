@@ -264,6 +264,17 @@ function prive_overboeking(array $in): array {
     return ['ok' => true];
 }
 
+/* Markeer een transactie als overboeking (neutrale categorie) zonder tegen-
+ * boeking — voor als de tegenrekening zelf óók wordt geïmporteerd. */
+function prive_transactie_markeer_overboeking(int $id): array {
+    $q = db()->prepare("SELECT id FROM prive_transacties WHERE id = :id");
+    $q->execute([':id' => $id]);
+    if (!$q->fetch()) json_response(['fout' => 'Transactie niet gevonden'], 404);
+    $cat = prive_overboeking_categorie_id();
+    db()->prepare("UPDATE prive_transacties SET categorie_id = :c WHERE id = :id")->execute([':c' => $cat, ':id' => $id]);
+    return ['ok' => true];
+}
+
 /* Koppel een bestaande (geïmporteerde) transactie aan een doelrekening:
  * maakt de tegenboeking op die rekening (spiegelbedrag) en linkt beide. */
 function prive_transactie_koppel_rekening(int $txId, int $doelRekeningId): array {

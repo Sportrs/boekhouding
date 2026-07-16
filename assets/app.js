@@ -1221,20 +1221,37 @@
   function openPriveKoppelRekening(tx, rek, refresh) {
     if (!tx) return;
     const doelen = rek.filter((r) => r.id !== tx.rekening_id);
-    if (!doelen.length) { toast('Maak eerst de andere rekening aan (bv. een contant- of spaarrekening) via de tab Rekeningen', 'error'); return; }
     const inkomend = tx.bedrag >= 0;
+    const st = { modus: 'spiegel' };
     const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
     const close = () => ov.remove();
-    ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>Overboeking naar eigen rekening</h2><button class="x">✕</button></div>
-      <div class="modal-body">
-        <div class="help">Deze boeking van <b>${euro(Math.abs(tx.bedrag))}</b> is een overboeking naar een andere eigen rekening. Kies welke — daar wordt de tegenkant automatisch geboekt (${inkomend ? '−' : '+'} ${euro(Math.abs(tx.bedrag))}), zodat beide saldo's kloppen. De boeking telt dan niet meer mee als uitgave/inkomst.</div>
-        <label class="field"><span>Naar welke rekening?</span><select id="doel">${doelen.map((r) => `<option value="${r.id}">${esc(r.naam)}${r.soort === 'contant' ? ' (contant)' : ''}</option>`).join('')}</select></label>
-      </div>
-      <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Klaar</button></div></div>`;
-    ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
-    ov.querySelector('#opslaan').onclick = async () => {
-      try { await api('prive_transactie_koppel_rekening', { id: tx.id, doelRekeningId: Number(ov.querySelector('#doel').value) }, 'POST'); toast('Overboeking geboekt ✓'); close(); refresh(); } catch (e) { toast(e.message, 'error'); }
-    };
+    function render() {
+      ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>Overboeking naar eigen rekening</h2><button class="x">✕</button></div>
+        <div class="modal-body">
+          <div class="help">Deze boeking van <b>${euro(Math.abs(tx.bedrag))}</b> is een overboeking tussen je eigen rekeningen. Hoe wil je het verwerken?</div>
+          <div class="toggle"><button data-m="spiegel" class="${st.modus === 'spiegel' ? 'active' : ''}">Tegenkant erbij boeken</button><button data-m="markeer" class="${st.modus === 'markeer' ? 'active' : ''}">Alleen markeren</button></div>
+          ${st.modus === 'spiegel'
+            ? `<div class="help" style="border-color:var(--warning);background:rgba(245,158,11,.1)">⚠️ Gebruik dit alléén als de tegenrekening <b>niet apart wordt geïmporteerd</b> (bv. een contant-pot). De app boekt dan de tegenkant (${inkomend ? '−' : '+'} ${euro(Math.abs(tx.bedrag))}) op de gekozen rekening. Importeer je die rekening óók via CSV/MT940, kies dan <b>"Alleen markeren"</b> — anders staat de tegenboeking er dubbel in.</div>
+               ${doelen.length ? `<label class="field"><span>Tegenkant boeken op</span><select id="doel">${doelen.map((r) => `<option value="${r.id}">${esc(r.naam)}${r.soort === 'contant' ? ' (contant)' : ''}</option>`).join('')}</select></label>` : '<div class="mut" style="font-size:13px">Je hebt nog geen andere rekening. Maak er een aan (tab Rekeningen) of kies "Alleen markeren".</div>'}`
+            : `<div class="help">De boeking krijgt de categorie <b>Overboeking eigen rekening</b> en telt niet meer mee als uitgave/inkomst — je saldo blijft kloppen. <b>Belangrijk:</b> zet op de tegenboeking (de + of − op je andere rekening, die je zelf importeert) óók deze categorie.</div>`}
+        </div>
+        <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">${st.modus === 'spiegel' ? 'Tegenkant boeken' : 'Markeren'}</button></div></div>`;
+      ov.querySelector('.x').onclick = close; ov.querySelector('#annuleer').onclick = close;
+      ov.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => { st.modus = b.dataset.m; render(); });
+      ov.querySelector('#opslaan').onclick = async () => {
+        try {
+          if (st.modus === 'spiegel') {
+            const doel = ov.querySelector('#doel');
+            if (!doel) return toast('Maak eerst een andere rekening aan, of kies "Alleen markeren"', 'error');
+            await api('prive_transactie_koppel_rekening', { id: tx.id, doelRekeningId: Number(doel.value) }, 'POST');
+          } else {
+            await api('prive_transactie_markeer_overboeking', { id: tx.id }, 'POST');
+          }
+          toast('Overboeking verwerkt ✓'); close(); refresh();
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    }
+    render();
   }
 
   function openPrivePost(post, refresh, prefill) {
