@@ -166,12 +166,28 @@ function prive_transacties_lijst(array $f): array {
     $q = db()->prepare($sql);
     $q->execute($p);
     $rows = $q->fetchAll();
+
+    // Regels leveren alléén een voorstel voor nog ongecategoriseerde transacties.
+    $regels = db()->query("SELECT r.zoekterm, r.categorie_id, c.naam FROM prive_regels r JOIN prive_categorieen c ON c.id = r.categorie_id")->fetchAll();
     foreach ($rows as &$r) {
         $r['id'] = (int) $r['id'];
         $r['rekening_id'] = (int) $r['rekening_id'];
         $r['bedrag'] = (float) $r['bedrag'];
         $r['categorie_id'] = $r['categorie_id'] !== null ? (int) $r['categorie_id'] : null;
         $r['koppel_id'] = $r['koppel_id'] !== null ? (int) $r['koppel_id'] : null;
+        $r['suggestie_id'] = null;
+        $r['suggestie_naam'] = null;
+        if ($r['categorie_id'] === null && $regels) {
+            $hooi = mb_strtolower(($r['tegenrekening_naam'] ?? '') . ' ' . ($r['omschrijving'] ?? ''));
+            foreach ($regels as $reg) {
+                $term = mb_strtolower(trim((string) $reg['zoekterm']));
+                if ($term !== '' && mb_strpos($hooi, $term) !== false) {
+                    $r['suggestie_id'] = (int) $reg['categorie_id'];
+                    $r['suggestie_naam'] = $reg['naam'];
+                    break;
+                }
+            }
+        }
         unset($r['ruw']);
     }
     return $rows;
@@ -330,11 +346,12 @@ function prive_bank_import(int $rekeningId, string $inhoud): array {
         $base = sha1($rekeningId . '|' . $r['datum'] . '|' . $bedrag . '|' . $r['tegenrekening_iban'] . '|' . $r['omschrijving']);
         $n = $tellers[$base] ?? 0; $tellers[$base] = $n + 1;
         $hash = sha1($base . '#' . $n);
-        $cat = prive_categorie_raden($r['tegenrekening_naam'], $r['omschrijving']);
+        // Bij import NOOIT automatisch categoriseren — de regels leveren alleen
+        // een voorstel (zie prive_transacties_lijst), dat je zelf toepast.
         $ins->execute([
             ':rek' => $rekeningId, ':d' => $r['datum'], ':b' => $bedrag,
             ':iban' => $r['tegenrekening_iban'] ?: null, ':naam' => $r['tegenrekening_naam'] ?: null,
-            ':oms' => $r['omschrijving'] ?: null, ':cat' => $cat, ':hash' => $hash, ':ruw' => $r['ruw'],
+            ':oms' => $r['omschrijving'] ?: null, ':cat' => null, ':hash' => $hash, ':ruw' => $r['ruw'],
         ]);
         if ($ins->rowCount() > 0) $geimp++; else $over++;
     }
