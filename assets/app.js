@@ -396,16 +396,18 @@
       const acc = state.accounts;
       const tekst = ((line.tegenrekening_naam || '') + ' ' + (line.omschrijving || '')).toLowerCase();
       const rc = acc.find((a) => /rekening.?courant|aandeelhouder/i.test(a.naam)) || acc.find((a) => /priv[eé]/i.test(a.naam));
-      const heeft1910 = acc.some((a) => a.nummer === '1910');
+      const verschRek = btwVerschRek();
+      const verschAcc = acc.find((a) => a.nummer === verschRek);
+      const verschLabel = verschAcc ? esc(verschAcc.nummer) + ' — ' + esc(verschAcc.naam) : esc(verschRek) + ' (af te dragen BTW)';
       const richting = line.afbij === 'af' ? 'DR de tegenrekening / CR de bank' : 'DR de bank / CR de tegenrekening';
       let suggest = '', hint = '';
       if (/priv[eé]|poelmans|aandeelhouder|rekening.?courant/.test(tekst)) {
         if (rc) { suggest = rc.nummer; hint = `Dit lijkt een <b>overboeking naar privé</b>. Kies als tegenrekening de rekening-courant aandeelhouder: <b>${esc(rc.nummer)} — ${esc(rc.naam)}</b>. Bij geld naar privé neemt je vordering op de aandeelhouder toe (${richting}).`; }
         else { hint = 'Dit lijkt een <b>overboeking naar privé</b>. Kies je rekening-courant aandeelhouder als tegenrekening (maak die eerst aan onder Instellingen als hij ontbreekt).'; }
       } else if (/belastingdienst/.test(tekst) && /omzetbelasting|aangifte ob|\bob\b|btw/.test(tekst)) {
-        suggest = heeft1910 ? '1910' : ''; hint = 'Dit lijkt een <b>BTW-betaling aan de Belastingdienst</b>. Kies als tegenrekening <b>1910 BTW te betalen</b> — daarmee loop je de eerder afgedragen BTW-schuld weg (' + richting + ').';
+        suggest = verschAcc ? verschRek : ''; hint = `Dit lijkt een <b>BTW-betaling aan de Belastingdienst</b>. Kies als tegenrekening <b>${verschLabel}</b> — daarmee loop je de eerder afgedragen BTW-schuld weg (${richting}).`;
       } else if (/belastingdienst/.test(tekst)) {
-        hint = 'Betaling aan/van de <b>Belastingdienst</b>. Kies de juiste tegenrekening: <b>1910 BTW te betalen</b> voor omzetbelasting, of een VpB-rekening voor vennootschapsbelasting.';
+        hint = `Betaling aan/van de <b>Belastingdienst</b>. Kies de juiste tegenrekening: <b>${verschLabel}</b> voor omzetbelasting, of een VpB-rekening voor vennootschapsbelasting.`;
       } else {
         hint = 'Een <b>overboeking</b> is geen kosten/omzet maar een verschuiving. Kies op de lege regel de tegenrekening waar dit geld heen/vandaan ging (bv. een andere bankrekening of de rekening-courant).';
       }
@@ -561,7 +563,7 @@
             <div class="num ${teBetalen ? 'dan' : 'suc'}" style="font-size:30px;font-weight:700;margin-top:8px;text-align:left">${euro(Math.abs(d.saldo))}</div>
             <div class="mut" style="font-size:14px;margin-top:4px">${teBetalen ? 'Te betalen aan de Belastingdienst' : 'Te ontvangen van de Belastingdienst'}</div>
             <button class="btn btn-brand" id="afdracht" style="margin-top:14px;width:100%">${teBetalen ? 'Afdracht boeken' : 'Teruggaaf boeken'}</button>
-            <div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5">Boekt de verschuldigde BTW (1910) en voorbelasting (1810) weg tegen de bank, zodat beide naar 0 lopen. Doe dit als je betaalt/de teruggaaf ontvangt.</div>
+            <div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5">Boekt de verschuldigde BTW (${esc(btwVerschRek())}) en voorbelasting (${esc(btwVoorRek())}) weg tegen de bank, zodat beide naar 0 lopen. Doe dit als je betaalt/de teruggaaf ontvangt.</div>
           </div>
           <div class="card" style="margin-top:24px">
             <div class="card-head">Boekingen met BTW in dit kwartaal</div>
@@ -1278,6 +1280,8 @@
     try { s = await api('instellingen'); await loadAccounts(); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
     state.settings = s;
     const TYPE = { actief: 'Actief', passief: 'Passief', kosten: 'Kosten', opbrengsten: 'Opbrengsten' };
+    const btwAccs = state.accounts.filter((a) => /btw|omzetbelasting/i.test(a.naam) || a.nummer === s.btwVoorbelasting || a.nummer === s.btwVerschuldigd).sort((a, b) => String(a.nummer).localeCompare(String(b.nummer)));
+    const btwOpt = (sel) => btwAccs.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === sel ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('');
     const rekRows = state.accounts.map((a) => `<tr>
         <td class="num klik" style="text-align:left" data-kaart="${esc(a.nummer)}" title="Bekijk verloop / grootboekkaart">${esc(a.nummer)}</td>
         <td class="klik" data-kaart="${esc(a.nummer)}">${esc(a.naam)}${a.systeem ? '<span class="badge">systeem</span>' : ''}${a.isBank ? '<span class="badge" style="color:var(--brand)">bank</span>' : ''}</td>
@@ -1295,6 +1299,15 @@
           <label class="field"><span>Boekjaar</span><input id="boekjaar" value="${esc(s.boekjaar)}" placeholder="2026" /></label>
         </div>
         <button class="btn btn-brand" id="saveBedrijf" style="margin-top:16px">Opslaan</button>
+      </div>
+      <div class="card p5" style="margin-bottom:24px">
+        <h2 style="font-size:14px;font-weight:500;color:var(--inkdim);margin:0 0 4px">BTW-rekeningen</h2>
+        <p class="mut" style="font-size:12px;margin:0 0 16px;max-width:640px;line-height:1.5">Op welke grootboekrekeningen boekt de app de BTW van je in- en verkoopfacturen? Standaard <b>1810</b>/<b>1910</b>. Zet ze op de rekeningen van je boekhouder (bv. <b>1520</b> te vorderen, <b>1500</b> af te dragen) zodat je eigen boekingen aansluiten op het rekeningschema. De BTW-<i>aangifte</i> zelf verandert hier niet van.</p>
+        <div class="row" style="max-width:640px">
+          <label class="field"><span>Voorbelasting (te vorderen BTW)</span><select id="btwVoor">${btwOpt(s.btwVoorbelasting)}</select></label>
+          <label class="field"><span>Verschuldigd (af te dragen BTW)</span><select id="btwVersch">${btwOpt(s.btwVerschuldigd)}</select></label>
+        </div>
+        <button class="btn btn-brand" id="saveBtw" style="margin-top:16px">Opslaan</button>
       </div>
       <div class="card p5" style="margin-bottom:24px">
         <h2 style="font-size:14px;font-weight:500;color:var(--inkdim);margin:0 0 4px">Anthropic API-sleutel</h2>
@@ -1318,6 +1331,12 @@
       try {
         await api('instellingen_opslaan', { bedrijfsnaam: document.getElementById('bedrijfsnaam').value, boekjaar: document.getElementById('boekjaar').value }, 'POST');
         toast('Opgeslagen ✓'); await loadSettings(); renderShell(); location.hash = '#/instellingen';
+      } catch (e) { toast(e.message, 'error'); }
+    });
+    document.getElementById('saveBtw').addEventListener('click', async () => {
+      try {
+        await api('instellingen_opslaan', { btwVoorbelasting: document.getElementById('btwVoor').value, btwVerschuldigd: document.getElementById('btwVersch').value }, 'POST');
+        toast('BTW-rekeningen opgeslagen ✓'); await loadSettings();
       } catch (e) { toast(e.message, 'error'); }
     });
     document.getElementById('saveKey').addEventListener('click', async () => {
@@ -1573,13 +1592,13 @@
       const rgls = [];
       if (st.type === 'inkoop') {
         rgls.push([st.grootboek, excl, 0]);
-        if (verlegd) { rgls.push(['1810', btw, 0]); rgls.push(['1910', 0, btw]); }
-        else if (btw > 0) rgls.push(['1810', btw, 0]);
+        if (verlegd) { rgls.push([btwVoorRek(), btw, 0]); rgls.push([btwVerschRek(), 0, btw]); }
+        else if (btw > 0) rgls.push([btwVoorRek(), btw, 0]);
         rgls.push([st.betaal, 0, totaal]);
       } else {
         rgls.push([st.betaal, totaal, 0]);
         rgls.push([st.grootboek, 0, excl]);
-        if (!verlegd && st.pct !== 'geen' && btw > 0) rgls.push(['1910', 0, btw]);
+        if (!verlegd && st.pct !== 'geen' && btw > 0) rgls.push([btwVerschRek(), 0, btw]);
       }
       return rgls.map((r) => `<tr><td style="padding:4px 16px">${esc(r[0])} — ${esc(naam(r[0]))}</td><td class="num" style="padding:4px 16px;color:var(--ink)">${r[1] ? euro(r[1]) : ''}</td><td class="num" style="padding:4px 16px;color:var(--ink)">${r[2] ? euro(r[2]) : ''}</td></tr>`).join('');
     }
@@ -1770,12 +1789,13 @@
     if (Math.abs(verschuldigd) < 0.005 && Math.abs(voorbelasting) < 0.005) return toast('Geen BTW in dit kwartaal om af te rekenen', 'error');
     const bank = (state.accounts.find((a) => a.isBank) || state.accounts.find((a) => /bunq|bank/i.test(a.naam)) || {}).nummer || '';
     const regels = [];
-    if (verschuldigd) regels.push({ rekening: '1910', debet: verschuldigd, credit: 0 }); // schuld verrekenen
-    if (voorbelasting) regels.push({ rekening: '1810', debet: 0, credit: voorbelasting }); // vordering verrekenen
+    const rVersch = btwVerschRek(), rVoor = btwVoorRek();
+    if (verschuldigd) regels.push({ rekening: rVersch, debet: verschuldigd, credit: 0 }); // schuld verrekenen
+    if (voorbelasting) regels.push({ rekening: rVoor, debet: 0, credit: voorbelasting }); // vordering verrekenen
     if (saldo > 0.005) regels.push({ rekening: bank, debet: 0, credit: saldo });           // betaling aan Belastingdienst
     else if (saldo < -0.005) regels.push({ rekening: bank, debet: -saldo, credit: 0 });     // teruggaaf van Belastingdienst
     const teBetalen = saldo >= 0;
-    const hint = `<b>BTW-afrekening Q${kwartaal} ${jaar}.</b> Je verrekent de verschuldigde BTW (${euro(verschuldigd)} op 1910) met de voorbelasting (${euro(voorbelasting)} op 1810). Het saldo van <b>${euro(Math.abs(saldo))}</b> ${teBetalen ? 'betaal je aan' : 'ontvang je van'} de Belastingdienst via de bank. Zo lopen 1810 én 1910 weer naar 0. Controleer de bankrekening en zet de datum op de dag van ${teBetalen ? 'betaling' : 'ontvangst'}.`;
+    const hint = `<b>BTW-afrekening Q${kwartaal} ${jaar}.</b> Je verrekent de verschuldigde BTW (${euro(verschuldigd)} op ${esc(rVersch)}) met de voorbelasting (${euro(voorbelasting)} op ${esc(rVoor)}). Het saldo van <b>${euro(Math.abs(saldo))}</b> ${teBetalen ? 'betaal je aan' : 'ontvang je van'} de Belastingdienst via de bank. Zo lopen ${esc(rVoor)} én ${esc(rVersch)} weer naar 0. Controleer de bankrekening en zet de datum op de dag van ${teBetalen ? 'betaling' : 'ontvangst'}.`;
     openMemoriaal(refresh, { hint, initial: { datum: vandaag(), omschrijving: `BTW-afrekening Q${kwartaal} ${jaar}`, regels } });
   }
 
@@ -1892,6 +1912,9 @@
   function pageHead(title, sub, actions) {
     return `<div class="page-head"><div><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div>${actions ? `<div class="page-actions">${actions}</div>` : ''}</div>`;
   }
+  // Instelbare BTW-grootboekrekeningen (default 1810/1910).
+  function btwVoorRek() { return (state.settings && state.settings.btwVoorbelasting) || '1810'; }
+  function btwVerschRek() { return (state.settings && state.settings.btwVerschuldigd) || '1910'; }
 
   // Duidelijke melding na een bankimport: alleen nieuwe regels tellen, dubbele worden genegeerd.
   function importMelding(r) {

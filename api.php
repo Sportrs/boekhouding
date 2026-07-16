@@ -56,6 +56,8 @@ switch ($actie) {
             'boekjaar'         => bh_boekjaar(),
             'apiKeyConfigured' => ai_beschikbaar(),
             'apiKeyFromConfig' => (bool) $configKey,
+            'btwVoorbelasting' => bh_instelling('btw_voorbelasting', '1810'),
+            'btwVerschuldigd'  => bh_instelling('btw_verschuldigd', '1910'),
         ]);
     }
 
@@ -63,6 +65,16 @@ switch ($actie) {
         if (isset($in['bedrijfsnaam'])) bh_instelling_zet('bedrijfsnaam', (string) $in['bedrijfsnaam']);
         if (isset($in['boekjaar']) && preg_match('/^\d{4}$/', (string) $in['boekjaar'])) {
             bh_instelling_zet('boekjaar', (string) $in['boekjaar']);
+        }
+        foreach ([['btwVoorbelasting', 'btw_voorbelasting'], ['btwVerschuldigd', 'btw_verschuldigd']] as [$veld, $sleutel]) {
+            if (isset($in[$veld])) {
+                $nr = trim((string) $in[$veld]);
+                if ($nr === '') continue;
+                $q = db()->prepare("SELECT COUNT(*) FROM rekeningen WHERE nummer = :n");
+                $q->execute([':n' => $nr]);
+                if (!(int) $q->fetchColumn()) json_response(['fout' => "BTW-rekening $nr bestaat niet"], 422);
+                bh_instelling_zet($sleutel, $nr);
+            }
         }
         json_response(['ok' => true]);
     }
@@ -160,16 +172,19 @@ switch ($actie) {
         $totaal    = centen($excl + ($verlegd ? 0.0 : $btwBedrag));
         $btwCode   = $geenBtw ? null : (string) $pct;
 
+        $btwVoor   = bh_instelling('btw_voorbelasting', '1810');   // te vorderen BTW (voorbelasting)
+        $btwVersch = bh_instelling('btw_verschuldigd', '1910');    // af te dragen BTW
+
         $regels = [];
         $richting = null;
         if ($type === 'inkoop') {
             $regels[] = [$grootboek, $excl, 0];
             if ($verlegd) {
-                $regels[] = ['1810', $btwBedrag, 0];   // voorbelasting (rubriek 5b)
-                $regels[] = ['1910', 0, $btwBedrag];   // verschuldigde verlegde BTW (rubriek 4b)
+                $regels[] = [$btwVoor, $btwBedrag, 0];   // voorbelasting (rubriek 5b)
+                $regels[] = [$btwVersch, 0, $btwBedrag]; // verschuldigde verlegde BTW (rubriek 4b)
                 $richting = 'verlegd';
             } else {
-                if ($btwBedrag > 0) $regels[] = ['1810', $btwBedrag, 0];
+                if ($btwBedrag > 0) $regels[] = [$btwVoor, $btwBedrag, 0];
                 $richting = $geenBtw ? null : 'vordering';
             }
             $regels[] = [$betaal, 0, $totaal];
@@ -177,7 +192,7 @@ switch ($actie) {
             $regels[] = [$betaal, $totaal, 0];
             $regels[] = [$grootboek, 0, $excl];
             if ($geenBtw || $verlegd) { $btwBedrag = 0.0; $btwCode = null; $richting = null; }
-            else { if ($btwBedrag > 0) $regels[] = ['1910', 0, $btwBedrag]; $richting = 'afdracht'; }
+            else { if ($btwBedrag > 0) $regels[] = [$btwVersch, 0, $btwBedrag]; $richting = 'afdracht'; }
         }
 
         db()->beginTransaction();

@@ -176,6 +176,19 @@ function xaf_importeer(string $xml, string $cutoff = '2026-07-01'): array {
     if ($p['bedrijfsnaam'] !== '') bh_instelling_zet('bedrijfsnaam', $p['bedrijfsnaam']);
     if ($p['boekjaar'] !== '') bh_instelling_zet('boekjaar', $p['boekjaar']);
 
+    // BTW-rekeningen automatisch op die van de accountant zetten (indien herkend),
+    // zodat je eigen boekingen meteen op het juiste rekeningschema aansluiten.
+    $voor = null; $versch = null; $verschHoog = null;
+    foreach ($p['accounts'] as $a) {
+        $nm = mb_strtolower($a['naam']);
+        if ($nm === 'te vorderen btw' && $voor === null) $voor = $a['nummer'];
+        if (str_contains($nm, 'af te dragen btw hoog')) $verschHoog = $a['nummer'];
+        elseif ($versch === null && str_contains($nm, 'af te dragen btw')) $versch = $a['nummer'];
+    }
+    $versch = $verschHoog ?? $versch;
+    if ($voor) bh_instelling_zet('btw_voorbelasting', $voor);
+    if ($versch) bh_instelling_zet('btw_verschuldigd', $versch);
+
     return [
         'ok' => true,
         'rekeningen' => count($p['accounts']),
