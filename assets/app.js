@@ -544,6 +544,25 @@
           <td class="mut" style="font-size:12px">${t.btwRichting === 'afdracht' ? 'afdracht' : 'vordering'} ${esc(t.btwCode)}%</td>
           <td class="num" style="color:var(--ink)">${euro(t.btwBedrag || 0)}</td></tr>`).join('')
         : `<tr><td colspan="4" class="empty">Geen boekingen.</td></tr>`;
+      const gb = d.grootboek || { rekeningen: [], teBetalen: 0 };
+      const gbSoort = { voorbelasting: 'voorbelasting', verrekening: 'verrekening', afdracht: 'af te dragen' };
+      const gbRows = gb.rekeningen.length ? gb.rekeningen.map((r) => `<tr>
+          <td class="num" style="text-align:left">${esc(r.nummer)}</td>
+          <td data-tip="${esc(r.naam)}" style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.naam)}</td>
+          <td class="mut">${gbSoort[r.soort] || r.soort}</td>
+          <td class="num">${r.debet ? euro(r.debet) : ''}</td>
+          <td class="num">${r.credit ? euro(r.credit) : ''}</td>
+          <td class="num" style="color:var(--ink)">${r.soort === 'verrekening' ? '<span class="mut">—</span>' : euro(r.bijdrage)}</td></tr>`).join('')
+        : `<tr><td colspan="6" class="empty">Geen BTW-mutaties op de grootboekrekeningen in dit kwartaal.</td></tr>`;
+      const gbBetalen = gb.teBetalen >= 0;
+      const gbCard = `<div class="card" style="margin-top:24px">
+        <div class="card-head">BTW volgens grootboek — gereconstrueerd uit de boekingen</div>
+        <div class="mut" style="padding:12px 20px 0;font-size:12px;line-height:1.5">Voor <b>geïmporteerde</b> periodes (bv. Q1/Q2 van je boekhouder) berekent de app de aangifte niet uit boekingskenmerken. Dit toont de werkelijke mutaties op je BTW-rekeningen: <b>af te dragen</b> (credit) minus <b>voorbelasting</b> (debet) = het saldo van de aangifte. Clearing-/tussenrekeningen tellen niet mee in het totaal.</div>
+        <div style="overflow-x:auto;min-width:0"><table class="compact">
+          <thead><tr><th>Rek.</th><th>Naam</th><th>Soort</th><th class="r">Debet</th><th class="r">Credit</th><th class="r">Bijdrage</th></tr></thead>
+          <tbody>${gbRows}</tbody>
+          <tfoot><tr><td colspan="5" style="font-weight:600;color:var(--inkdim)">Saldo aangifte (${gbBetalen ? 'te betalen' : 'te ontvangen'})</td><td class="num ${gbBetalen ? 'dan' : 'suc'}" style="font-weight:700">${euro(Math.abs(gb.teBetalen))}</td></tr></tfoot>
+        </table></div></div>`;
       return `<div class="grid grid-2">
         <div class="card">
           <div class="card-head">Rubrieken (${datumNL(d.from)} t/m ${datumNL(d.to)})</div>
@@ -570,7 +589,7 @@
             <table><tbody>${txRows}</tbody></table>
           </div>
         </div>
-      </div>`;
+      </div>` + gbCard;
     }
     async function rerender() {
       const tabs = `<div class="tabs page-actions">${[1, 2, 3, 4].map((q) => `<button data-q="${q}" class="${q === kwartaal ? 'active' : ''}">Q${q}</button>`).join('')}</div>`;
@@ -1898,7 +1917,7 @@
       </div>
       ${histHtml}
       <div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 4px">Boekjaar ${boekjaar}</div>
-      <div style="overflow-x:auto"><table class="compact">
+      <div style="overflow-x:auto;min-width:0"><table class="compact">
         <thead><tr><th>Datum</th><th>Omschrijving</th><th class="r">Debet</th><th class="r">Credit</th><th class="r">Saldo</th></tr></thead>
         <tbody>
           <tr><td></td><td class="mut">Beginsaldo</td><td></td><td></td><td class="num" style="color:var(--ink)">${euro(d.beginsaldo)}</td></tr>

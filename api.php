@@ -482,7 +482,7 @@ switch ($actie) {
         $kwartaal = (int) ($in['quarter'] ?? 0);
         $jaar     = (int) ($in['year'] ?? bh_boekjaar());
         if (!in_array($kwartaal, [1, 2, 3, 4], true)) json_response(['fout' => 'quarter moet 1-4 zijn'], 422);
-        json_response(bh_btw($kwartaal, $jaar));
+        json_response(array_merge(bh_btw($kwartaal, $jaar), ['grootboek' => bh_btw_grootboek($kwartaal, $jaar)]));
     }
 
     // ---------------- Reset ----------------

@@ -251,6 +251,40 @@ function bh_btw(int $kwartaal, int $jaar): array {
     ];
 }
 
+/* BTW gereconstrueerd uit de grootboekbewegingen (voor geïmporteerde periodes
+ * zonder boekingskenmerken). Sommeert de mutaties op alle BTW-rekeningen. */
+function bh_btw_grootboek(int $kwartaal, int $jaar): array {
+    ['from' => $from, 'to' => $to] = bh_kwartaal_grenzen($kwartaal, $jaar);
+    $q = db()->prepare(
+        "SELECT r.rekening AS nummer, k.naam,
+                COALESCE(SUM(r.debet),0) AS deb, COALESCE(SUM(r.credit),0) AS cred
+         FROM transactie_regels r
+         JOIN transacties t ON t.id = r.transactie_id
+         JOIN rekeningen  k ON k.nummer = r.rekening
+         WHERE t.datum BETWEEN :f AND :t
+           AND (k.naam LIKE '%BTW%' OR k.naam LIKE '%omzetbelasting%')
+         GROUP BY r.rekening, k.naam
+         HAVING deb <> 0 OR cred <> 0
+         ORDER BY r.rekening"
+    );
+    $q->execute([':f' => $from, ':t' => $to]);
+    $rekeningen = [];
+    $net = 0.0;
+    foreach ($q->fetchAll() as $x) {
+        $naam = (string) $x['naam'];
+        $soort = preg_match('/te vorderen|voorbelasting|voorheffing/i', $naam) ? 'voorbelasting'
+            : (preg_match('/afgedragen omzetbelasting|tussenrekening|correcties/i', $naam) ? 'verrekening' : 'afdracht');
+        $bijdrage = centen((float) $x['cred'] - (float) $x['deb']);   // credit = afdracht (+), debet = aftrek (−)
+        if ($soort !== 'verrekening') $net += $bijdrage;              // clearing-/tussenrekeningen tellen niet mee in de aangifte
+        $rekeningen[] = [
+            'nummer' => $x['nummer'], 'naam' => $naam, 'soort' => $soort,
+            'debet' => centen((float) $x['deb']), 'credit' => centen((float) $x['cred']),
+            'bijdrage' => $bijdrage,
+        ];
+    }
+    return ['from' => $from, 'to' => $to, 'rekeningen' => $rekeningen, 'teBetalen' => centen($net)];
+}
+
 // ---------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------
