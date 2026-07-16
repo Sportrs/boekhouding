@@ -1877,7 +1877,7 @@
     const rows = d.regels.length
       ? d.regels.map((r) => `<tr>
           <td class="num" style="text-align:left">${datumNL(r.datum)}</td>
-          <td>${esc(r.omschrijving)}</td>
+          <td data-tip="${esc(r.omschrijving)}" style="max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.omschrijving)}</td>
           <td class="num">${r.debet ? euro(r.debet) : ''}</td>
           <td class="num">${r.credit ? euro(r.credit) : ''}</td>
           <td class="num" style="color:var(--ink)">${euro(r.saldo)}</td></tr>`).join('')
@@ -1898,14 +1898,14 @@
       </div>
       ${histHtml}
       <div class="mut" style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 4px">Boekjaar ${boekjaar}</div>
-      <table>
+      <div style="overflow-x:auto"><table class="compact">
         <thead><tr><th>Datum</th><th>Omschrijving</th><th class="r">Debet</th><th class="r">Credit</th><th class="r">Saldo</th></tr></thead>
         <tbody>
           <tr><td></td><td class="mut">Beginsaldo</td><td></td><td></td><td class="num" style="color:var(--ink)">${euro(d.beginsaldo)}</td></tr>
           ${rows}
         </tbody>
         <tfoot><tr><td></td><td style="font-weight:600;color:var(--inkdim)">Eindsaldo</td><td></td><td></td><td class="num" style="font-weight:700;color:var(--ink)">${euro(d.eindsaldo)}</td></tr></tfoot>
-      </table>`;
+      </table></div>`;
   }
 
   // ---------------- Kleine HTML-helpers ----------------
