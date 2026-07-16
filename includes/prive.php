@@ -151,7 +151,7 @@ function prive_regels_toepassen(): array {
 
 // --- Transacties -----------------------------------------------------
 function prive_transacties_lijst(array $f): array {
-    $sql = "SELECT t.*, c.naam AS categorie_naam, c.soort AS categorie_soort, r.naam AS rekening_naam
+    $sql = "SELECT t.*, c.naam AS categorie_naam, c.soort AS categorie_soort, r.naam AS rekening_naam, r.aandeel AS rekening_aandeel
             FROM prive_transacties t
             LEFT JOIN prive_categorieen c ON c.id = t.categorie_id
             LEFT JOIN prive_rekeningen r ON r.id = t.rekening_id WHERE 1=1";
@@ -175,6 +175,7 @@ function prive_transacties_lijst(array $f): array {
         $r['bedrag'] = (float) $r['bedrag'];
         $r['categorie_id'] = $r['categorie_id'] !== null ? (int) $r['categorie_id'] : null;
         $r['koppel_id'] = $r['koppel_id'] !== null ? (int) $r['koppel_id'] : null;
+        $r['rekening_aandeel'] = (float) ($r['rekening_aandeel'] ?? 100);
         $r['suggestie_id'] = null;
         $r['suggestie_naam'] = null;
         if ($r['categorie_id'] === null && $regels) {
@@ -468,7 +469,7 @@ function prive_overzicht(string $from, string $to): array {
 /* Maand-op-maand: per categorie 12 maanden + totalen (gewogen naar aandeel). */
 function prive_maandcijfers(int $jaar): array {
     $q = db()->prepare(
-        "SELECT MONTH(t.datum) AS m, t.bedrag * r.aandeel / 100 AS bedrag, c.naam AS cat, c.soort AS catsoort
+        "SELECT MONTH(t.datum) AS m, t.bedrag * r.aandeel / 100 AS bedrag, c.naam AS cat, c.soort AS catsoort, t.categorie_id AS catid
          FROM prive_transacties t
          JOIN prive_rekeningen r ON r.id = t.rekening_id
          LEFT JOIN prive_categorieen c ON c.id = t.categorie_id
@@ -491,7 +492,7 @@ function prive_maandcijfers(int $jaar): array {
         else $uit[$m] += $b;
         $key = $row['cat'] ?: 'Ongecategoriseerd';
         if (!isset($cats[$key])) {
-            $cats[$key] = ['naam' => $key, 'soort' => $row['catsoort'] ?: ($b >= 0 ? 'inkomst' : 'uitgave'), 'perMaand' => array_fill(1, 12, 0.0), 'totaal' => 0.0];
+            $cats[$key] = ['naam' => $key, 'id' => $row['catid'] !== null ? (int) $row['catid'] : null, 'soort' => $row['catsoort'] ?: ($b >= 0 ? 'inkomst' : 'uitgave'), 'perMaand' => array_fill(1, 12, 0.0), 'totaal' => 0.0];
         }
         $cats[$key]['perMaand'][$m] += $b;
         $cats[$key]['totaal'] += $b;
@@ -512,7 +513,7 @@ function prive_maandcijfers(int $jaar): array {
     };
     $categorieen = [];
     foreach ($lijst as $c) {
-        $categorieen[] = ['naam' => $c['naam'], 'soort' => $c['soort'], 'perMaand' => $reeks($c['perMaand']), 'totaal' => centen($c['totaal'])];
+        $categorieen[] = ['naam' => $c['naam'], 'id' => $c['id'], 'soort' => $c['soort'], 'perMaand' => $reeks($c['perMaand']), 'totaal' => centen($c['totaal'])];
     }
     $saldo = [];
     for ($m = 1; $m <= 12; $m++) $saldo[] = centen($ink[$m] + $uit[$m]);

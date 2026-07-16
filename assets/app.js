@@ -996,6 +996,13 @@
     const M = ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
     const cel = (v) => `<td class="num ${v < 0 ? 'dan' : v > 0 ? 'suc' : 'mut'}">${v ? euro0(v) : '·'}</td>`;
     const rij = (naam, arr, totaal, cls) => `<tr><td style="${cls || ''}white-space:nowrap">${naam}</td>${arr.map(cel).join('')}<td class="num" style="font-weight:600;color:var(--ink)">${totaal ? euro0(totaal) : '·'}</td></tr>`;
+    // Klikbare categorie-rij: elke gevulde cel opent de onderliggende transacties.
+    const catRij = (c) => {
+      const cid = c.id === null ? 'null' : c.id;
+      const cellen = c.perMaand.map((v, mi) => `<td class="num ${v < 0 ? 'dan' : v > 0 ? 'suc' : 'mut'}${v ? ' klik' : ''}"${v ? ` data-cat="${cid}" data-catnaam="${esc(c.naam)}" data-maand="${mi}"` : ''}>${v ? euro0(v) : '·'}</td>`).join('');
+      const tot = `<td class="num${c.totaal ? ' klik' : ''}"${c.totaal ? ` data-cat="${cid}" data-catnaam="${esc(c.naam)}" data-maand="all"` : ''} style="font-weight:600;color:var(--ink)">${c.totaal ? euro0(c.totaal) : '·'}</td>`;
+      return `<tr><td style="color:var(--ink);white-space:nowrap">${esc(c.naam)}</td>${cellen}${tot}</tr>`;
+    };
 
     let series;
     if (priveMaandModus === 'jaar') {
@@ -1016,7 +1023,7 @@
       <div class="card" style="overflow:hidden"><div style="overflow-x:auto"><table class="compact">
         <thead><tr><th>Categorie</th>${M.map((m) => `<th class="r">${m}</th>`).join('')}<th class="r">Totaal</th></tr></thead>
         <tbody>
-        ${d.categorieen.length ? d.categorieen.map((c) => rij(esc(c.naam), c.perMaand, c.totaal, 'color:var(--ink);')).join('') : `<tr><td colspan="14" class="empty">Geen transacties in ${priveJaar}.</td></tr>`}
+        ${d.categorieen.length ? d.categorieen.map(catRij).join('') : `<tr><td colspan="14" class="empty">Geen transacties in ${priveJaar}.</td></tr>`}
         </tbody>
         <tfoot>
           ${rij('Uitgaven', d.uitgavenPerMaand, d.totaalUitgaven, 'font-weight:600;color:var(--inkdim);')}
@@ -1026,7 +1033,50 @@
       </table></div></div>
       <div class="mut" style="font-size:12px;margin-top:10px">Bedragen zijn gewogen naar het aandeel van de rekening (een gedeelde rekening telt voor jouw deel). <span class="dan">Rood</span> = uitgave, <span class="suc">groen</span> = inkomst.</div>`;
     view.querySelectorAll('[data-mm]').forEach((b) => b.onclick = () => { priveMaandModus = b.dataset.mm; laad(); });
+    view.querySelectorAll('[data-maand]').forEach((cell) => cell.onclick = () => openPriveMaandDetail(cell.dataset.cat, cell.dataset.catnaam, cell.dataset.maand));
     document.getElementById('pjaar').onchange = (e) => { const j = Number(e.target.value); if (j >= 2000 && j <= 2100) { priveJaar = j; laad(); } };
+  }
+
+  async function openPriveMaandDetail(catId, catNaam, maand) {
+    const MAAND = ['januari', 'februari', 'maart', 'april', 'mei', 'juni', 'juli', 'augustus', 'september', 'oktober', 'november', 'december'];
+    let from, to, titel;
+    if (maand === 'all') {
+      from = priveJaar + '-01-01'; to = priveJaar + '-12-31'; titel = catNaam + ' — heel ' + priveJaar;
+    } else {
+      const mi = Number(maand); const mm = String(mi + 1).padStart(2, '0');
+      const last = new Date(priveJaar, mi + 1, 0).getDate();
+      from = priveJaar + '-' + mm + '-01'; to = priveJaar + '-' + mm + '-' + String(last).padStart(2, '0');
+      titel = catNaam + ' — ' + MAAND[mi] + ' ' + priveJaar;
+    }
+    const filter = { from, to };
+    if (catId === 'null') filter.ongecategoriseerd = 1; else filter.categorie = catId;
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    ov.innerHTML = `<div class="modal"><div class="modal-head"><h2>${esc(titel)}</h2><button class="x">✕</button></div><div class="modal-body" id="md"><div class="mut">Laden…</div></div></div>`;
+    ov.querySelector('.x').onclick = close;
+    let tx;
+    try { tx = await api('prive_transacties', filter); } catch (e) { ov.querySelector('#md').innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+    const gedeeld = tx.some((t) => t.rekening_aandeel < 100);
+    const totVol = round2(tx.reduce((s, t) => s + t.bedrag, 0));
+    const totDeel = round2(tx.reduce((s, t) => s + t.bedrag * (t.rekening_aandeel || 100) / 100, 0));
+    const rows = tx.length ? tx.map((t) => {
+      const deel = round2(t.bedrag * (t.rekening_aandeel || 100) / 100);
+      return `<tr>
+        <td class="num" style="text-align:left">${datumNL(t.datum)}</td>
+        <td class="mut">${esc(t.rekening_naam || '')}${t.rekening_aandeel < 100 ? ` <span class="badge" style="color:var(--warning)">${t.rekening_aandeel}%</span>` : ''}</td>
+        <td data-tip="${esc(t.tegenrekening_naam || '')}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.tegenrekening_naam || '—')}</td>
+        <td data-tip="${esc(t.omschrijving || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
+        <td class="num ${t.bedrag >= 0 ? 'suc' : 'dan'}">${euro(t.bedrag)}</td>
+        ${gedeeld ? `<td class="num" style="color:var(--ink)">${euro(deel)}</td>` : ''}</tr>`;
+    }).join('') : `<tr><td colspan="${gedeeld ? 6 : 5}" class="empty">Geen transacties.</td></tr>`;
+    ov.querySelector('#md').innerHTML = `
+      <div style="overflow-x:auto;min-width:0"><table class="compact">
+        <thead><tr><th>Datum</th><th>Rekening</th><th>Tegenpartij</th><th>Omschrijving</th><th class="r">Bedrag</th>${gedeeld ? '<th class="r">Jouw deel</th>' : ''}</tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr><td colspan="4" style="font-weight:600;color:var(--inkdim)">Totaal (${tx.length})</td><td class="num" style="font-weight:600">${euro(totVol)}</td>${gedeeld ? `<td class="num" style="font-weight:700;color:var(--ink)">${euro(totDeel)}</td>` : ''}</tr></tfoot>
+      </table></div>
+      ${gedeeld ? '<div class="mut" style="font-size:12px;margin-top:10px">Op de Per maand-pagina telt <b>Jouw deel</b> mee (gedeelde rekeningen naar je aandeel). Het volledige bedrag staat in de kolom Bedrag.</div>' : ''}`;
   }
 
   async function privRekeningen(view) {
