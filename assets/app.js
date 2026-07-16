@@ -1095,7 +1095,7 @@
     const laad = () => privRekeningen(view);
     let rek;
     try { rek = await api('prive_rekeningen'); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
-    view.innerHTML = pageHead('Rekeningen', 'Je privérekeningen, saldo en bankimport.', `<button class="btn btn-danger" id="priveReset">Schone lei…</button><button class="btn btn-brand" id="nieuwRek">+ Rekening</button>`) +
+    view.innerHTML = pageHead('Rekeningen', 'Je privérekeningen, saldo en bankimport.', `<button class="btn btn-ghost" id="txWissen">Transacties wissen…</button><button class="btn btn-danger" id="priveReset">Schone lei…</button><button class="btn btn-brand" id="nieuwRek">+ Rekening</button>`) +
       `<div class="help" style="margin-bottom:16px">Maak per rekening een regel aan (met <b>beginsaldo</b>) en klik <b>importeer</b> voor je afschrift — <b>ING CSV</b> (<code>.csv</code>) of <b>MT940</b> (<code>.sta</code>, o.a. bunq) worden automatisch herkend. Er worden <b>alleen nieuwe betalingen</b> toegevoegd; dubbele (bij een zelfde of overlappend bestand) worden automatisch genegeerd. Ook bezittingen (auto, beleggingen) kun je als rekening toevoegen. Bij een <b>gedeelde rekening</b> zet je je <b>aandeel</b> (bv. 50%) — dan telt alleen jouw deel mee in je vermogen en uitgaven.</div>
         <div class="card"><table class="compact"><thead><tr><th>Naam</th><th>Soort</th><th>IBAN</th><th class="r">Aandeel</th><th class="r">Saldo</th><th></th></tr></thead><tbody>
         ${rek.length ? rek.map((r) => `<tr><td style="color:var(--ink)">${esc(r.naam)}</td><td>${PRIVE_REK_SOORT[r.soort] || r.soort}</td><td class="mut">${esc(r.iban || '')}</td><td class="num">${r.aandeel}%</td><td class="num" style="color:var(--ink)">${euro(r.saldo)}${r.aandeel < 100 ? `<div class="mut" style="font-size:11px">jouw deel ${euro(r.aandeelSaldo)}</div>` : ''}</td>
@@ -1103,6 +1103,10 @@
         </tbody></table></div>
         <input type="file" id="mtfile" accept=".sta,.csv,.txt,text/plain" style="display:none" />`;
     document.getElementById('nieuwRek').onclick = () => openPriveRekening(null, laad);
+    document.getElementById('txWissen').onclick = async () => {
+      if (!confirm('Alleen de TRANSACTIES wissen. Je rekeningen (incl. beginsaldi), categorieën, herken-regels en te ontvangen/betalen-posten blijven staan. Daarna importeer je alles opnieuw met je CSV/MT940-bestanden.\n\nDoorgaan?')) return;
+      try { const r = await api('prive_transacties_wissen', { bevestig: 'WIS' }, 'POST'); toast(`${r.verwijderd} transacties gewist ✓`); laad(); } catch (e) { toast(e.message, 'error'); }
+    };
     document.getElementById('priveReset').onclick = async () => {
       if (!confirm('Schone lei: dit verwijdert AL je privérekeningen, transacties, posten en herken-regels (je categorieën blijven). Daarna kun je opnieuw importeren vanaf 1 januari.\n\nDoorgaan?')) return;
       try { await api('prive_reset', { bevestig: 'PRIVE' }, 'POST'); toast('Privéboekhouding gewist — schone lei ✓'); laad(); } catch (e) { toast(e.message, 'error'); }

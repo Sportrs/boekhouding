@@ -402,6 +402,13 @@ function prive_post_verwijder(int $id): void {
     db()->prepare("DELETE FROM prive_posten WHERE id = :id")->execute([':id' => $id]);
 }
 
+/* Alleen de transacties wissen — rekeningen (incl. beginsaldi), categorieën,
+ * herken-regels en te ontvangen/betalen-posten blijven staan. */
+function prive_transacties_wissen(): array {
+    $n = db()->exec("DELETE FROM prive_transacties");
+    return ['ok' => true, 'verwijderd' => (int) $n];
+}
+
 /* Volledige schone lei voor de privéboekhouding: wist rekeningen, transacties,
  * posten en regels. Categorieën blijven staan. */
 function prive_reset(): array {

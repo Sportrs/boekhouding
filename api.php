@@ -507,6 +507,11 @@ switch ($actie) {
         json_response(prive_reset());
     }
 
+    case 'prive_transacties_wissen': {
+        if (($in['bevestig'] ?? '') !== 'WIS') json_response(['fout' => 'Bevestiging ontbreekt'], 422);
+        json_response(prive_transacties_wissen());
+    }
+
     case 'reset': {
         if (($in['bevestig'] ?? '') !== 'RESET') json_response(['fout' => 'Bevestiging ontbreekt'], 422);
         db()->exec("DELETE FROM transactie_regels");
