@@ -1070,8 +1070,8 @@
         return `<tr>
           <td class="num" style="text-align:left">${datumNL(t.datum)}</td>
           <td class="mut">${esc(t.rekening_naam || '')}${t.rekening_aandeel < 100 ? ` <span class="badge" style="color:var(--warning)">${t.rekening_aandeel}%</span>` : ''}</td>
-          <td data-tip="${esc(t.tegenrekening_naam || '')}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.tegenrekening_naam || '—')}</td>
-          <td data-tip="${esc(t.omschrijving || '')}" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
+          <td data-tip="${esc(t.tegenrekening_naam || '')}" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.tegenrekening_naam || '—')}</td>
+          <td data-tip="${esc(t.omschrijving || '')}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
           <td class="num ${t.bedrag >= 0 ? 'suc' : 'dan'}">${euro(t.bedrag)}</td>
           ${gedeeld ? `<td class="num" style="color:var(--ink)">${euro(deel)}</td>` : ''}
           <td class="r"><button class="linkbtn" data-edit-tx="${t.id}" title="Bewerk deze boeking">✎ bewerken</button></td></tr>`;
