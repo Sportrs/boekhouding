@@ -193,6 +193,29 @@ input:focus, select:focus { border-color: var(--brand); }
 .faq-a b { color: var(--inkdim); font-weight: 600; }
 .faq-a code { background: rgba(0,0,0,.25); padding: 1px 5px; border-radius: 4px; font-size: 12px; color: var(--inkdim); }
 
+/* Maandelijkse routine (stappenplan bovenaan Dashboard / Privé-overzicht) */
+.routine { overflow: hidden; }
+.routine > summary { cursor: pointer; padding: 12px 20px; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--inkdim); font-weight: 500; list-style: none; display: flex; align-items: center; gap: 8px; }
+.routine > summary::-webkit-details-marker { display: none; }
+.routine > summary::marker { content: ''; }
+.routine > summary:hover { color: var(--ink); }
+.routine > summary:after { content: 'verbergen'; margin-left: auto; font-size: 12px; font-weight: 400; color: var(--muted); }
+.routine:not([open]) > summary { border-bottom: 0; }
+.routine:not([open]) > summary:after { content: 'tonen'; }
+.routine-steps { list-style: none; counter-reset: rstep; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+.routine-steps li { counter-increment: rstep; position: relative; padding-left: 36px; }
+.routine-steps li:before {
+  content: counter(rstep); position: absolute; left: 0; top: 1px;
+  width: 24px; height: 24px; border-radius: 50%; background: rgba(59,130,246,.15); color: var(--brand);
+  font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+}
+.routine-steps .rt { color: var(--ink); font-weight: 600; font-size: 14px; margin-bottom: 3px; }
+.routine-steps .rd { color: var(--muted); font-size: 13px; line-height: 1.65; }
+.routine-steps .rd b { color: var(--inkdim); font-weight: 600; }
+.routine-steps .rd code { background: rgba(0,0,0,.25); padding: 1px 5px; border-radius: 4px; font-size: 12px; color: var(--inkdim); }
+.routine-foot { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; line-height: 1.65; }
+.routine-foot b { color: var(--inkdim); font-weight: 600; }
+
 /* Tooltip (volledige naam/omschrijving bij afgekapte cellen) */
 .tip { position: fixed; z-index: 60; background: var(--surface2); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 12px; max-width: 380px; box-shadow: 0 8px 24px rgba(0,0,0,.45); pointer-events: none; line-height: 1.45; white-space: normal; word-break: break-word; }
 [data-tip] { cursor: help; }

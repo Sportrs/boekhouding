@@ -233,6 +233,8 @@
       : `<tr><td colspan="3" class="empty">Nog geen boekingen.</td></tr>`;
     view.innerHTML = `
       ${pageHead('Dashboard', 'Boekjaar ' + esc(d.boekjaar))}
+      ${routineBlock('gibs')}
+      ${routineBlock('gibsKwartaal')}
       <div class="grid grid-4">
         ${stat('Banksaldo', euro(d.banksaldo), 'brand')}
         ${stat('Omzet boekjaar', euro(d.omzetBoekjaar), 'suc')}
@@ -252,6 +254,7 @@
         </div>
       </div>
       ${faqBlock('dashboard')}`;
+    bindRoutine(view);
   }
 
   // ---------------- Pagina: Facturen ----------------
@@ -965,6 +968,7 @@
     const maxCat = Math.max(1, ...d.perCategorie.map((c) => c.bedrag));
     const gedeeld = d.rekeningen.some((r) => r.aandeel < 100);
     view.innerHTML = pageHead('Overzicht', 'Je persoonlijke vermogen en uitgaven — volledig los van de BV.') + `
+      ${routineBlock('prive')}
       <div class="grid grid-4">
         ${stat('Vermogen', euro(d.vermogen), d.vermogen >= 0 ? 'suc' : 'dan')}
         ${stat('Op rekeningen', euro(d.totRekeningen))}
@@ -985,6 +989,7 @@
         ${gedeeld ? '<div class="mut" style="font-size:12px;margin-top:4px">Bedragen van gedeelde rekeningen tellen voor jouw aandeel mee (bv. 50%).</div>' : ''}
       </div></div>
       ${faqBlock('prive')}`;
+    bindRoutine(view);
     document.getElementById('pjaar').onchange = (e) => { const j = Number(e.target.value); if (j >= 2000 && j <= 2100) { priveJaar = j; laad(); } };
   }
 
@@ -2116,6 +2121,68 @@
         ${items.map((f) => `<details class="faq"><summary>${esc(f.q)}</summary><div class="faq-a">${f.a}</div></details>`).join('')}
       </div></div>`;
   }
+  // ---------------- Maandelijkse routine (stappenplan) ----------------
+  const ROUTINES = {
+    gibs: {
+      titel: '🗓 Maandelijkse routine — dit doe je één keer per maand',
+      stappen: [
+        { t: 'Bankafschrift importeren',
+          d: 'Ga naar <b>Bank</b> → <b>Afschrift importeren</b> en kies het bestand dat je bij je bank downloadt: <b>MT940</b> (<code>.sta</code>, o.a. bunq) of <b>ING CSV</b> (<code>.csv</code>). Alleen nieuwe regels worden toegevoegd — dezelfde periode nog eens importeren kan dus geen kwaad.' },
+        { t: 'Elke bankregel afhandelen (tabblad open)',
+          d: 'Per regel kies je één actie. <b>Boek</b> = er hoort een factuur bij: upload de PDF en bedrag, BTW en datum worden uitgelezen. <b>Koppel</b> (blauw) verschijnt alléén als er al een boeking met hetzelfde bedrag bestaat — gebruik die, dan boek je niet dubbel. <b>Overboeking</b> = geen factuur maar een verschuiving (geld naar privé, BTW-betaling, tussen je eigen banken). <b>Negeer</b> = niet relevant. Je bent klaar als het tabblad <b>open</b> leeg is.' },
+        { t: 'Even controleren',
+          d: 'Terug op dit <b>Dashboard</b>: komt het <b>banksaldo</b> overeen met wat er echt op je rekening staat? Zo ja, dan is de maand rond.' },
+      ],
+      foot: 'Was dit de <b>laatste maand van een kwartaal</b> (maart, juni, september of december)? Dan komt daar de <b>BTW-aangifte</b> bij — zie het blok hieronder.',
+    },
+    gibsKwartaal: {
+      titel: '％ Elk kwartaal — BTW-aangifte',
+      dicht: true,
+      stappen: [
+        { t: 'Eerst de maand afronden',
+          d: 'Doe eerst de drie stappen hierboven voor de <b>laatste maand van het kwartaal</b>. Het tabblad <b>open</b> op de Bank-pagina moet leeg zijn: wat nog niet geboekt is, telt ook niet mee in de aangifte.' },
+        { t: 'Aangifte opvragen',
+          d: 'Ga naar <b>BTW-aangifte</b>, zet het jaar goed en klik het kwartaal aan (<b>Q1</b> t/m <b>Q4</b>). Je ziet de rubrieken (1a hoog, 1b laag, 4b verlegde EU-diensten, 5b voorbelasting) en rechts het <b>saldo aangifte</b>: te betalen of te ontvangen.' },
+        { t: 'Controleren',
+          d: 'Loop <b>Boekingen met BTW in dit kwartaal</b> even na. Onderaan staat <b>BTW volgens grootboek</b> — dat is diezelfde aangifte, maar opnieuw berekend uit je BTW-grootboekrekeningen. Wijken die twee bedragen af, dan mist er een boeking of staat bij een leverancier het <b>BTW-regime</b> verkeerd (geen / verlegd / 21%).' },
+        { t: 'Indienen bij de Belastingdienst',
+          d: 'Neem de rubrieken over in <b>Mijn Belastingdienst Zakelijk</b> en dien de aangifte daar in — de app doet dat niet zelf. Betaal daarna het bedrag dat je verschuldigd bent.' },
+        { t: 'Betaling of teruggaaf boeken',
+          d: 'Zodra het geld is afgeschreven of binnengekomen: terug naar het kwartaal → <b>Afdracht boeken</b> (of <b>Teruggaaf boeken</b>). De verschuldigde BTW en de voorbelasting worden dan tegen de bank weggeboekt en lopen naar € 0. De bijbehorende bankregel handel je op de <b>Bank</b>-pagina af met <b>Koppel</b>.' },
+      ],
+      foot: '<b>Op tijd:</b> aangifte én betaling moeten binnen zijn in de maand ná het kwartaal — Q1 vóór 30 april, Q2 vóór 31 juli, Q3 vóór 31 oktober, Q4 vóór 31 januari. <b>Eén keer per jaar:</b> het <b>Jaarverslag</b> voor de jaarrekening.',
+    },
+    prive: {
+      titel: '🗓 Maandelijkse routine — dit doe je één keer per maand',
+      stappen: [
+        { t: 'Afschriften importeren',
+          d: 'Tabblad <b>Rekeningen</b> → klik bij elke bank- en spaarrekening op <b>importeer</b> en kies je <b>ING CSV</b> (<code>.csv</code>) of <b>MT940</b> (<code>.sta</code>). Dubbele regels worden automatisch overgeslagen, dus je kunt gerust een ruimere periode pakken. Vergeet de gezamenlijke rekening niet.' },
+        { t: 'Elke transactie een plekje geven',
+          d: 'Tabblad <b>Transacties</b> → tabblad <b>Nog te doen</b>. Kies per regel een <b>categorie</b>; staat er een geel <b>↳ voorstel</b>, dan klik je dat aan. Zet <b>"onthoud categorie"</b> aan terwijl je bezig bent — dan herkent de app die tegenpartij de volgende keer zelf. Ging het geld naar je <b>eigen</b> spaar-, gezamenlijke of contantrekening? Klik dan op <b>overboeking</b> in plaats van een categorie te kiezen, anders telt het onterecht als uitgave.' },
+        { t: 'Even controleren',
+          d: 'Je bent klaar als <b>Nog te doen</b> op 0 staat. Kijk hier op het <b>Overzicht</b> of het <b>saldo</b> per rekening klopt met je echte bankrekening.' },
+      ],
+      foot: '<b>Af en toe:</b> geld geleend of uitgeleend? Leg dat vast op <b>Te ontvangen / betalen</b>, dan klopt je vermogen. Wil je een herken-regel aanpassen of in één keer op alle openstaande regels toepassen, ga dan naar <b>Categorieën</b>. Twijfel je hoe je iets boekt? Onderaan het tabblad <b>Transacties</b> staan de lastige gevallen uitgewerkt.',
+    },
+  };
+  function routineBlock(key) {
+    const r = ROUTINES[key];
+    if (!r) return '';
+    const bewaard = localStorage.getItem('bh_routine_' + key);
+    const open = bewaard === null ? !r.dicht : bewaard !== '0';
+    return `<details class="card routine" data-routine="${key}" ${open ? 'open' : ''} style="margin-bottom:24px">
+      <summary>${esc(r.titel)}</summary>
+      <div class="card-body">
+        <ol class="routine-steps">${r.stappen.map((s) => `<li><div class="rt">${esc(s.t)}</div><div class="rd">${s.d}</div></li>`).join('')}</ol>
+        ${r.foot ? `<div class="routine-foot">${r.foot}</div>` : ''}
+      </div></details>`;
+  }
+  function bindRoutine(view) {
+    view.querySelectorAll('details[data-routine]').forEach((d) => {
+      d.addEventListener('toggle', () => localStorage.setItem('bh_routine_' + d.dataset.routine, d.open ? '1' : '0'));
+    });
+  }
+
   function stat(label, value, cls) {
     return `<div class="stat"><div class="label">${esc(label)}</div><div class="value ${cls || ''}">${value}</div></div>`;
   }
