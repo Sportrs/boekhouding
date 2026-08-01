@@ -563,7 +563,8 @@
       let d;
       try { d = await api('btw', { quarter: kwartaal, year: jaar }); } catch (e) { return `<div class="dan">${esc(e.message)}</div>`; }
       data = d;
-      const teBetalen = d.saldo >= 0;
+      const basis = btwSaldoBasis(d);
+      const teBetalen = basis.saldo >= 0;
       const rij = (label, g, b) => `<tr><td>${label}</td><td class="num mut">${g != null ? euro(g) : ''}</td><td class="num" style="color:var(--ink)">${euro(b)}</td></tr>`;
       const txRows = d.transacties.length ? d.transacties.map((t) => `<tr>
           <td class="num" style="text-align:left">${datumNL(t.datum)}</td><td>${esc(t.omschrijving)}${t.btwPeriode ? ` <span class="badge" style="color:var(--warning)" title="De boeking staat op ${datumNL(t.datum)}; de BTW is handmatig in dit kwartaal meegenomen">↷ verschoven</span>` : ''}</td>
@@ -604,11 +605,12 @@
         </div>
         <div>
           <div class="card p5">
-            <div style="font-size:14px;font-weight:500;color:var(--inkdim)">Saldo aangifte</div>
-            <div class="num ${teBetalen ? 'dan' : 'suc'}" style="font-size:30px;font-weight:700;margin-top:8px;text-align:left">${euro(Math.abs(d.saldo))}</div>
+            <div style="font-size:14px;font-weight:500;color:var(--inkdim)">Saldo aangifte${basis.uitGrootboek ? ' <span class="badge" style="color:var(--warning)">volgens grootboek</span>' : ''}</div>
+            <div class="num ${teBetalen ? 'dan' : 'suc'}" style="font-size:30px;font-weight:700;margin-top:8px;text-align:left">${euro(Math.abs(basis.saldo))}</div>
             <div class="mut" style="font-size:14px;margin-top:4px">${teBetalen ? 'Te betalen aan de Belastingdienst' : 'Te ontvangen van de Belastingdienst'}</div>
+            ${basis.uitGrootboek ? `<div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5;color:var(--warning)">De rubriekentabel hiernaast komt op <b>${euro(Math.abs(basis.rubriek))}</b>, maar die telt alleen boekingen die je <b>in deze app</b> hebt gemaakt — boekingen uit een XAF-import dragen geen BTW-kenmerken. Dit bedrag komt uit de werkelijke mutaties op je BTW-rekeningen (blok onderaan) en is het volledige beeld. Vergelijk het met de aangifte die je hebt ingediend voor je iets boekt.</div>` : ''}
             <button class="btn btn-brand" id="afdracht" style="margin-top:14px;width:100%">${teBetalen ? 'Afdracht boeken' : 'Teruggaaf boeken'}</button>
-            <div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5">Boekt de verschuldigde BTW (${esc(btwVerschRek())}) en voorbelasting (${esc(btwVoorRek())}) weg tegen de bank, zodat beide naar 0 lopen. Doe dit als je betaalt/de teruggaaf ontvangt.</div>
+            <div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5">${basis.uitGrootboek ? 'Boekt elke BTW-rekening uit het blok onderaan naar 0 tegen de bank.' : `Boekt de verschuldigde BTW (${esc(btwVerschRek())}) en voorbelasting (${esc(btwVoorRek())}) weg tegen de bank, zodat beide naar 0 lopen.`} Doe dit als je betaalt/de teruggaaf ontvangt.</div>
           </div>
           <div class="card" style="margin-top:24px">
             <div class="card-head">Boekingen met BTW in dit kwartaal</div>
@@ -2058,18 +2060,8 @@
     const bank = (state.accounts.find((a) => a.isBank) || state.accounts.find((a) => /bunq|bank/i.test(a.naam)) || {}).nummer || '';
     const rVersch = btwVerschRek(), rVoor = btwVoorRek();
 
-    // Boekingen die uit een XAF-import komen hebben géén BTW-kenmerken, dus de
-    // rubrieken hierboven zien ze niet. De reconstructie uit het grootboek ziet
-    // alle mutaties op de BTW-rekeningen — geïmporteerd én zelf geboekt — en is
-    // dus leidend zodra die afwijkt. Anders zou je hier het verkeerde bedrag boeken.
-    const gb = d.grootboek || { rekeningen: [], teBetalen: 0 };
-    const gbRek = (gb.rekeningen || []).filter((r) => r.soort !== 'verrekening' && Math.abs(r.bijdrage) >= 0.005);
-    const gbSaldo = round2(gb.teBetalen || 0);
-    // Ook als het saldo toevallig 0 is kan er van alles openstaan dat naar 0 moet.
-    const rubriekLeeg = Math.abs(verschuldigd) < 0.005 && Math.abs(voorbelasting) < 0.005;
-    const uitGrootboek = gbRek.length > 0 && (rubriekLeeg || Math.abs(gbSaldo - saldo) >= 0.005);
-
-    const eindSaldo = uitGrootboek ? gbSaldo : saldo;
+    // Zelfde afweging als de kop op de pagina, zodat knop en kop nooit uiteenlopen.
+    const { gbRek, gbSaldo, rubriekLeeg, uitGrootboek, saldo: eindSaldo } = btwSaldoBasis(d);
     if (!uitGrootboek && rubriekLeeg) return toast('Geen BTW in dit kwartaal om af te rekenen', 'error');
     const regels = [];
     if (uitGrootboek) {
@@ -2210,6 +2202,21 @@
   /* Rood alarm als de ingestelde BTW-rekeningen geen BTW-rekeningen blijken te zijn.
      Standaard is 1810/1910, maar in het schema van een accountant kan 1810 bijvoorbeeld
      "Af te dragen loonheffing" zijn — dan boekt de app de BTW stilzwijgend verkeerd. */
+  /* Welk saldo is leidend voor de aangifte?
+     De rubrieken komen uit de BTW-kenmerken op je eigen boekingen. Een XAF-import
+     zet die kenmerken niet, dus voor een periode die van je boekhouder komt ziet
+     dat blok bijna niets. De reconstructie uit het grootboek leest de werkelijke
+     mutaties op je BTW-rekeningen en is dan het volledige beeld. */
+  function btwSaldoBasis(d) {
+    const rubriek = round2(d.saldo != null ? d.saldo : (d.verschuldigd || 0) - (d.rubriek5b || 0));
+    const gb = d.grootboek || { rekeningen: [], teBetalen: 0 };
+    const gbRek = (gb.rekeningen || []).filter((r) => r.soort !== 'verrekening' && Math.abs(r.bijdrage) >= 0.005);
+    const gbSaldo = round2(gb.teBetalen || 0);
+    const rubriekLeeg = Math.abs(round2(d.verschuldigd || 0)) < 0.005 && Math.abs(round2(d.rubriek5b || 0)) < 0.005;
+    const uitGrootboek = gbRek.length > 0 && (rubriekLeeg || Math.abs(gbSaldo - rubriek) >= 0.005);
+    return { rubriek, gbSaldo, gbRek, rubriekLeeg, uitGrootboek, saldo: uitGrootboek ? gbSaldo : rubriek };
+  }
+
   function btwRekeningWaarschuwing() {
     const c = (state.settings && state.settings.btwCheck) || null;
     if (!c) return '';

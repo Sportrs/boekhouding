@@ -12,3 +12,7 @@ error_log
 # Privé brondocumenten (jaarrekeningen, bankafschriften, facturen) — NOOIT naar repo/server
 assets/documenten/
 facturen/
+
+# Screenshots met cijfers erin, tijdelijk in de projectmap gezet
+/Scherm*afbeelding*.png
+/Screenshot*.png
