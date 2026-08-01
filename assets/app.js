@@ -2057,7 +2057,8 @@
     const verschuldigd = round2(d.verschuldigd || 0);
     const voorbelasting = round2(d.rubriek5b || 0);
     const saldo = round2(d.saldo != null ? d.saldo : verschuldigd - voorbelasting);
-    const bank = (state.accounts.find((a) => a.isBank) || state.accounts.find((a) => /bunq|bank/i.test(a.naam)) || {}).nummer || '';
+    const liquide = state.accounts.filter((a) => a.type === 'actief' && !a.systeem);
+    const bank = betaalRek(liquide) || (liquide.find((a) => a.isBank) || liquide.find((a) => /bunq|bank/i.test(a.naam)) || {}).nummer || '';
     const rVersch = btwVerschRek(), rVoor = btwVoorRek();
 
     // Zelfde afweging als de kop op de pagina, zodat knop en kop nooit uiteenlopen.
