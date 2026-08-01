@@ -620,11 +620,12 @@
         </div>
         <div>
           <div class="card p5">
-            <div style="font-size:14px;font-weight:500;color:var(--inkdim)">Saldo aangifte${basis.uitGrootboek ? ' <span class="badge" style="color:var(--warning)">volgens grootboek</span>' : ''}</div>
+            <div style="font-size:14px;font-weight:500;color:var(--inkdim)">Saldo aangifte${basis.uitGrootboek ? ' <span class="badge" style="color:var(--warning)">volgens grootboek</span>' : ''}${basis.inconsistent ? ' <span class="badge" style="color:var(--danger)">controleer</span>' : ''}</div>
             <div class="num ${teBetalen ? 'dan' : 'suc'}" style="font-size:30px;font-weight:700;margin-top:8px;text-align:left">${euro(Math.abs(basis.saldo))}</div>
             <div class="mut" style="font-size:14px;margin-top:4px">${basis.afgerekend ? 'Dit kwartaal is al afgerekend' : teBetalen ? 'Te betalen aan de Belastingdienst' : 'Te ontvangen van de Belastingdienst'}</div>
             ${basis.afgerekend ? `<div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5;color:var(--success)">Al je BTW-rekeningen staan voor dit kwartaal op 0 — er is dus al een afrekening geboekt. De rubriekentabel hiernaast toont nog ${euro(Math.abs(basis.rubriek))}, maar dat zijn losse boekingskenmerken en geen openstaand saldo. Boek hier niets meer, anders reken je dubbel af.</div>`
-              : basis.uitGrootboek ? `<div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5;color:var(--warning)">De rubriekentabel hiernaast komt op <b>${euro(Math.abs(basis.rubriek))}</b>, maar die telt alleen boekingen die je <b>in deze app</b> hebt gemaakt — boekingen uit een XAF-import dragen geen BTW-kenmerken. Dit bedrag komt uit de werkelijke mutaties op je BTW-rekeningen (blok onderaan) en is het volledige beeld. Vergelijk het met de aangifte die je hebt ingediend voor je iets boekt.</div>` : ''}
+              : basis.uitGrootboek ? `<div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5;color:var(--warning)">De rubriekentabel hiernaast komt op <b>${euro(Math.abs(basis.rubriek))}</b>, maar die telt alleen boekingen die je <b>in deze app</b> hebt gemaakt — boekingen uit een XAF-import dragen geen BTW-kenmerken. Dit bedrag komt uit de werkelijke mutaties op je BTW-rekeningen (blok onderaan) en is het volledige beeld. Vergelijk het met de aangifte die je hebt ingediend voor je iets boekt.</div>`
+              : basis.inconsistent ? `<div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5;color:var(--danger)">⚠ Dit bedrag komt uit de <b>rubriekentabel</b> hiernaast — dat is wat je in het formulier invult, en dus wat deze knop boekt. Maar het blok onderaan komt uit op <b>${euro(Math.abs(basis.gbSaldo))}</b>, en die twee horen gelijk te zijn. Er is een boeking waarvan de <b>BTW-kenmerken</b> niet overeenkomen met de <b>journaalregels</b> — bijvoorbeeld wel een creditregel op de af-te-dragen-rekening, maar niet gemarkeerd als verlegd. Zoek die boeking op en zet het BTW-regime goed vóór je aangifte doet.</div>` : ''}
             <button class="btn ${basis.afgerekend ? 'btn-ghost' : 'btn-brand'}" id="afdracht" style="margin-top:14px;width:100%">${basis.afgerekend ? 'Opnieuw afrekenen…' : teBetalen ? 'Afdracht boeken' : 'Teruggaaf boeken'}</button>
             <div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5">${basis.uitGrootboek ? 'Boekt elke BTW-rekening uit het blok onderaan naar 0 tegen de bank.' : `Boekt de verschuldigde BTW (${esc(btwVerschRek())}) en voorbelasting (${esc(btwVoorRek())}) weg tegen de bank, zodat beide naar 0 lopen.`} Doe dit als je betaalt/de teruggaaf ontvangt.</div>
           </div>
@@ -2280,9 +2281,16 @@
     // niet "geen gegevens". Zonder dit onderscheid viel de kop na het boeken weer
     // terug op het rubriekenbedrag en leek er ineens weer iets open te staan.
     const heeftMutaties = (gb.rekeningen || []).some((r) => r.soort !== 'verrekening');
-    const uitGrootboek = heeftMutaties && (rubriekLeeg || Math.abs(gbSaldo - rubriek) >= 0.005);
-    const afgerekend = uitGrootboek && gbRek.length === 0 && Math.abs(gbSaldo) < 0.005;
-    return { rubriek, gbSaldo, gbRek, rubriekLeeg, uitGrootboek, afgerekend, saldo: uitGrootboek ? gbSaldo : rubriek };
+    const afgerekend = heeftMutaties && gbRek.length === 0 && Math.abs(gbSaldo) < 0.005;
+    // Rubrieken leeg = periode van de boekhouder (XAF kent geen BTW-kenmerken).
+    // Dan is het grootboek het enige beeld dat er is.
+    const uitGrootboek = heeftMutaties && rubriekLeeg && !afgerekend;
+    // Allebei gevuld maar ongelijk? Dan is er iets mis met de boekingskenmerken van
+    // een boeking. Nooit stilzwijgend het grootboek kiezen: de rubrieken zijn wat je
+    // in het formulier invult, dus die moeten leidend zijn — mét een waarschuwing.
+    const inconsistent = heeftMutaties && !rubriekLeeg && !afgerekend && Math.abs(gbSaldo - rubriek) >= 0.005;
+    const saldo = afgerekend ? 0 : uitGrootboek ? gbSaldo : rubriek;
+    return { rubriek, gbSaldo, gbRek, rubriekLeeg, uitGrootboek, inconsistent, afgerekend, saldo };
   }
 
   function btwRekeningWaarschuwing() {
