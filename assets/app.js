@@ -611,11 +611,11 @@
             ${rij('1c — Overige tarieven', d.rubriek1c.grondslag, d.rubriek1c.btw)}
             ${rij('1d — Privégebruik', d.rubriek1d.grondslag, d.rubriek1d.btw)}
             ${d.rubriek4b ? rij('4b — Verworven diensten uit EU (verlegd)', d.rubriek4b.grondslag, d.rubriek4b.btw) : ''}
-            <tr style="background:rgba(38,52,73,.4)"><td style="font-weight:500;color:var(--inkdim)">Verschuldigde BTW</td><td></td><td class="num" style="font-weight:500;color:var(--ink)">${euro(d.verschuldigd)}</td></tr>
+            <tr style="background:rgba(38,52,73,.4)"><td style="font-weight:500;color:var(--inkdim)">5a — Verschuldigde omzetbelasting (1a t/m 4b)</td><td></td><td class="num" style="font-weight:500;color:var(--ink)">${euro(d.verschuldigd)}</td></tr>
             ${rij('5b — Voorbelasting', null, d.rubriek5b)}
-            <tr style="background:rgba(38,52,73,.4)"><td style="font-weight:600;color:var(--inkdim)">Saldo (verschuldigd − voorbelasting)</td><td></td><td class="num ${round2(d.saldo) >= 0 ? 'dan' : 'suc'}" style="font-weight:700">${euro(Math.abs(round2(d.saldo)))} ${round2(d.saldo) >= 0 ? 'te betalen' : 'te ontvangen'}</td></tr>
+            <tr style="background:rgba(38,52,73,.4)"><td style="font-weight:600;color:var(--inkdim)">5c — Subtotaal (5a − 5b)</td><td></td><td class="num ${round2(d.saldo) >= 0 ? 'dan' : 'suc'}" style="font-weight:700">${euro(Math.abs(round2(d.saldo)))} ${round2(d.saldo) >= 0 ? 'te betalen' : 'te ontvangen'}</td></tr>
           </tbody></table>
-          <div class="mut" style="font-size:12px;padding:0 20px 16px;line-height:1.5">Verlegde BTW (4b) staat hier <b>twee keer</b>: als verschuldigd én als voorbelasting in 5b. Die heffen elkaar op, dus het saldo is lager dan 5b. Dat hoort zo.</div>
+          <div class="mut" style="font-size:12px;padding:0 20px 16px;line-height:1.5">Neem deze bedragen <b>één op één</b> over in het aangifteformulier. <b>5c</b> vul je niet zelf in — dat rekent het formulier uit. Verlegde BTW (<b>4b</b>) staat met opzet twee keer in deze tabel: als verschuldigd bij 4b én als aftrekbaar in <b>5b</b>. Die heffen elkaar op, dus 5b is hoger dan wat je uiteindelijk terugkrijgt. Dat hoort zo — trek je hem er bij 5b vanaf, dan betaal je hem alsnog.</div>
         </div>
         <div>
           <div class="card p5">
