@@ -59,6 +59,7 @@ switch ($actie) {
             'btwVoorbelasting' => bh_instelling('btw_voorbelasting', '1810'),
             'btwVerschuldigd'  => bh_instelling('btw_verschuldigd', '1910'),
             'betaalrekening'   => bh_instelling('betaalrekening', ''),
+            'btwAfrekenrekening' => bh_instelling('btw_afrekenrekening', ''),
             'btwCheck'         => bh_btw_rekening_check(),
         ]);
     }
@@ -78,15 +79,17 @@ switch ($actie) {
                 bh_instelling_zet($sleutel, $nr);
             }
         }
-        // Standaard betaalrekening ("betaald via" bij een nieuwe boeking). Leeg = geen voorkeur.
-        if (isset($in['betaalrekening'])) {
-            $nr = trim((string) $in['betaalrekening']);
+        // Standaard betaalrekening ("betaald via") en de tussenrekening voor de
+        // BTW-afrekening. Beide optioneel; leeg = geen voorkeur / oude gedrag.
+        foreach ([['betaalrekening', 'betaalrekening'], ['btwAfrekenrekening', 'btw_afrekenrekening']] as [$veld, $sleutel]) {
+            if (!isset($in[$veld])) continue;
+            $nr = trim((string) $in[$veld]);
             if ($nr !== '') {
                 $q = db()->prepare("SELECT COUNT(*) FROM rekeningen WHERE nummer = :n");
                 $q->execute([':n' => $nr]);
                 if (!(int) $q->fetchColumn()) json_response(['fout' => "Rekening $nr bestaat niet"], 422);
             }
-            bh_instelling_zet('betaalrekening', $nr);
+            bh_instelling_zet($sleutel, $nr);
         }
         json_response(['ok' => true]);
     }

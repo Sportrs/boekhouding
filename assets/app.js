@@ -431,7 +431,18 @@
         if (rc) { suggest = rc.nummer; hint = `Dit lijkt een <b>overboeking naar privé</b>. Kies als tegenrekening de rekening-courant aandeelhouder: <b>${esc(rc.nummer)} — ${esc(rc.naam)}</b>. Bij geld naar privé neemt je vordering op de aandeelhouder toe (${richting}).`; }
         else { hint = 'Dit lijkt een <b>overboeking naar privé</b>. Kies je rekening-courant aandeelhouder als tegenrekening (maak die eerst aan onder Instellingen als hij ontbreekt).'; }
       } else if (/belastingdienst/.test(tekst) && /omzetbelasting|aangifte ob|\bob\b|btw/.test(tekst)) {
-        suggest = verschAcc ? verschRek : ''; hint = `Dit lijkt een <b>BTW-betaling aan de Belastingdienst</b>. Kies als tegenrekening <b>${verschLabel}</b> — daarmee loop je de eerder afgedragen BTW-schuld weg (${richting}).`;
+        // Werk je met een tussenrekening voor de BTW-afrekening, dan is dít de tweede
+        // stap: de BTW-rekeningen zijn al leeggeboekt per kwartaaleinde, hier loopt
+        // alleen de tussenrekening nog weg tegen de bank.
+        const afrRek = (state.settings && state.settings.btwAfrekenrekening) || '';
+        const afrAcc = acc.find((a) => a.nummer === afrRek);
+        if (afrAcc) {
+          suggest = afrRek;
+          hint = `Dit lijkt de <b>BTW-afrekening met de Belastingdienst</b>. Kies als tegenrekening je tussenrekening <b>${esc(afrAcc.nummer)} — ${esc(afrAcc.naam)}</b> — dat is de tweede stap na "Afdracht/Teruggaaf boeken" op de BTW-pagina, en daarmee loopt die tussenrekening weer naar 0 (${richting}). Heb je die afrekening nog niet geboekt? Doe dat eerst op de <b>BTW</b>-pagina.`;
+        } else {
+          suggest = verschAcc ? verschRek : '';
+          hint = `Dit lijkt een <b>BTW-betaling aan de Belastingdienst</b>. Kies als tegenrekening <b>${verschLabel}</b> — daarmee loop je de eerder afgedragen BTW-schuld weg (${richting}).`;
+        }
       } else if (/belastingdienst/.test(tekst)) {
         hint = `Betaling aan/van de <b>Belastingdienst</b>. Kies de juiste tegenrekening: <b>${verschLabel}</b> voor omzetbelasting, of een VpB-rekening voor vennootschapsbelasting.`;
       } else {
@@ -1485,7 +1496,7 @@
     try { s = await api('instellingen'); await loadAccounts(); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
     state.settings = s;
     const TYPE = { actief: 'Actief', passief: 'Passief', kosten: 'Kosten', opbrengsten: 'Opbrengsten' };
-    const btwAccs = state.accounts.filter((a) => /btw|omzetbelasting/i.test(a.naam) || a.nummer === s.btwVoorbelasting || a.nummer === s.btwVerschuldigd).sort((a, b) => String(a.nummer).localeCompare(String(b.nummer)));
+    const btwAccs = state.accounts.filter((a) => /btw|omzetbelasting/i.test(a.naam) || a.nummer === s.btwVoorbelasting || a.nummer === s.btwVerschuldigd || a.nummer === s.btwAfrekenrekening).sort((a, b) => String(a.nummer).localeCompare(String(b.nummer)));
     const btwOpt = (sel) => btwAccs.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === sel ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('');
     // Dezelfde lijst als de keuzelijst "Betaald via" in het boekingsscherm.
     const betaalAccs = state.accounts.filter((a) => a.type === 'actief' && !a.systeem);
@@ -1515,6 +1526,10 @@
           <label class="field"><span>Voorbelasting (te vorderen BTW)</span><select id="btwVoor">${btwOpt(s.btwVoorbelasting)}</select></label>
           <label class="field"><span>Verschuldigd (af te dragen BTW)</span><select id="btwVersch">${btwOpt(s.btwVerschuldigd)}</select></label>
         </div>
+        <div class="row" style="max-width:640px;margin-top:12px">
+          <label class="field"><span>Tussenrekening BTW-afrekening</span><select id="btwAfr"><option value="">— geen (direct tegen de bank) —</option>${btwAccs.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === s.btwAfrekenrekening ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('')}</select></label>
+        </div>
+        <p class="mut" style="font-size:12px;margin:10px 0 0;max-width:640px;line-height:1.5">Met een tussenrekening boekt <b>Afdracht/Teruggaaf boeken</b> je BTW-rekeningen leeg op de <b>laatste dag van het kwartaal zelf</b>, tegen deze rekening. Het kwartaal sluit dan op nul. Zonder tussenrekening krijgt die boeking de datum van de betaling — meestal in het volgende kwartaal — en telt hij dáár mee als BTW-mutatie, waardoor die aangifte niet meer klopt. De betaling of teruggaaf letter je daarna op de <b>Bank</b>-pagina af tegen deze rekening.</p>
         <button class="btn btn-brand" id="saveBtw" style="margin-top:16px">Opslaan</button>
       </div>
       <div class="card p5" style="margin-bottom:24px">
@@ -1551,8 +1566,8 @@
     });
     document.getElementById('saveBtw').addEventListener('click', async () => {
       try {
-        await api('instellingen_opslaan', { btwVoorbelasting: document.getElementById('btwVoor').value, btwVerschuldigd: document.getElementById('btwVersch').value }, 'POST');
-        toast('BTW-rekeningen opgeslagen ✓'); await loadSettings();
+        await api('instellingen_opslaan', { btwVoorbelasting: document.getElementById('btwVoor').value, btwVerschuldigd: document.getElementById('btwVersch').value, btwAfrekenrekening: document.getElementById('btwAfr').value }, 'POST');
+        toast('BTW-rekeningen opgeslagen ✓'); await loadSettings(); renderRoute();
       } catch (e) { toast(e.message, 'error'); }
     });
     document.getElementById('saveBetaal').addEventListener('click', async () => {
@@ -2059,6 +2074,17 @@
     const saldo = round2(d.saldo != null ? d.saldo : verschuldigd - voorbelasting);
     const liquide = state.accounts.filter((a) => a.type === 'actief' && !a.systeem);
     const bank = betaalRek(liquide) || (liquide.find((a) => a.isBank) || liquide.find((a) => /bunq|bank/i.test(a.naam)) || {}).nummer || '';
+    /* Met een tussenrekening (Instellingen) boeken we de BTW-rekeningen leeg op de
+       laatste dag van het kwartaal zélf, tegen die tussenrekening. Anders zou de
+       afrekening — die de datum van de betaling krijgt — in het vólgende kwartaal
+       vallen en dáár als BTW-mutatie meetellen. De tussenrekening staat buiten de
+       aangiftetelling, dus die vervuilt niets. De bankregel letter je daarna apart
+       af tegen dezelfde rekening (Bank → overboeking). */
+    const afrekenRek = (state.settings && state.settings.btwAfrekenrekening) || '';
+    const viaTussen = afrekenRek && state.accounts.some((a) => a.nummer === afrekenRek);
+    const tegen = viaTussen ? afrekenRek : bank;
+    const kwartaalEind = () => { const m = kwartaal * 3; const dag = new Date(jaar, m, 0).getDate(); return `${jaar}-${String(m).padStart(2, '0')}-${String(dag).padStart(2, '0')}`; };
+    const naamVan = (nr) => { const a = state.accounts.find((x) => x.nummer === nr); return a ? a.naam : nr; };
     const rVersch = btwVerschRek(), rVoor = btwVoorRek();
 
     // Zelfde afweging als de kop op de pagina, zodat knop en kop nooit uiteenlopen.
@@ -2074,14 +2100,19 @@
       if (verschuldigd) regels.push({ rekening: rVersch, debet: verschuldigd, credit: 0 }); // schuld verrekenen
       if (voorbelasting) regels.push({ rekening: rVoor, debet: 0, credit: voorbelasting }); // vordering verrekenen
     }
-    if (eindSaldo > 0.005) regels.push({ rekening: bank, debet: 0, credit: eindSaldo });      // betaling aan Belastingdienst
-    else if (eindSaldo < -0.005) regels.push({ rekening: bank, debet: -eindSaldo, credit: 0 }); // teruggaaf van Belastingdienst
+    if (eindSaldo > 0.005) regels.push({ rekening: tegen, debet: 0, credit: eindSaldo });      // nog te betalen aan de Belastingdienst
+    else if (eindSaldo < -0.005) regels.push({ rekening: tegen, debet: -eindSaldo, credit: 0 }); // nog te ontvangen
 
     const teBetalen = eindSaldo >= 0;
-    const hint = uitGrootboek
-      ? `<b>BTW-afrekening Q${kwartaal} ${jaar} — op basis van het grootboek.</b> De rubriekentabel komt op ${euro(Math.abs(saldo))}, maar die telt alleen boekingen die je <b>in deze app</b> hebt gemaakt. Boekingen uit een <b>XAF-import</b> (van je accountant) dragen geen BTW-kenmerken en missen daar dus. De mutaties op je BTW-rekeningen tellen op tot <b>${euro(Math.abs(gbSaldo))}</b> ${teBetalen ? 'te betalen' : 'te ontvangen'} — dat is het volledige beeld, dus daar gaan we van uit. Elke BTW-rekening wordt hieronder naar 0 teruggeboekt tegen de bank. <b>Controleer de regels tegen je aangifte</b> voor je boekt, en zet de datum op de dag van ${teBetalen ? 'betaling' : 'ontvangst'}.`
-      : `<b>BTW-afrekening Q${kwartaal} ${jaar}.</b> Je verrekent de verschuldigde BTW (${euro(verschuldigd)} op ${esc(rVersch)}) met de voorbelasting (${euro(voorbelasting)} op ${esc(rVoor)}). Het saldo van <b>${euro(Math.abs(saldo))}</b> ${teBetalen ? 'betaal je aan' : 'ontvang je van'} de Belastingdienst via de bank. Zo lopen ${esc(rVoor)} én ${esc(rVersch)} weer naar 0. Controleer de bankrekening en zet de datum op de dag van ${teBetalen ? 'betaling' : 'ontvangst'}.`;
-    openMemoriaal(refresh, { hint, initial: { datum: vandaag(), omschrijving: `BTW-afrekening Q${kwartaal} ${jaar}`, regels } });
+    const bedrag = euro(Math.abs(eindSaldo));
+    const bron = uitGrootboek
+      ? `De rubriekentabel komt op ${euro(Math.abs(saldo))}, maar die telt alleen boekingen die je <b>in deze app</b> hebt gemaakt — boekingen uit een <b>XAF-import</b> dragen geen BTW-kenmerken. De werkelijke mutaties op je BTW-rekeningen tellen op tot <b>${bedrag}</b> ${teBetalen ? 'te betalen' : 'te ontvangen'}, en daar gaan we van uit.`
+      : `Je verrekent de verschuldigde BTW (${euro(verschuldigd)} op ${esc(rVersch)}) met de voorbelasting (${euro(voorbelasting)} op ${esc(rVoor)}), saldo <b>${bedrag}</b> ${teBetalen ? 'te betalen' : 'te ontvangen'}.`;
+    const staart = viaTussen
+      ? `De BTW-rekeningen worden leeggeboekt tegen <b>${esc(afrekenRek)} — ${esc(naamVan(afrekenRek))}</b>, met als datum <b>${datumNL(kwartaalEind())}</b>: de laatste dag van het kwartaal zelf. Zo sluit Q${kwartaal} op nul en telt deze afrekening niet mee in de aangifte van het volgende kwartaal. <b>Stap 2:</b> zodra je ${teBetalen ? 'betaalt' : 'de teruggaaf ontvangt'}, verschijnt die bankregel in je afschrift — klik daar op <b>overboeking</b> en kies ${esc(afrekenRek)} als tegenrekening. Daarmee loopt ook de tussenrekening weer naar 0.`
+      : `De BTW-rekeningen worden leeggeboekt tegen de bank. Zet de datum op de dag van ${teBetalen ? 'betaling' : 'ontvangst'}. <b>Tip:</b> stel bij Instellingen een <b>tussenrekening BTW-afrekening</b> in — dan valt deze boeking in het kwartaal zelf en vervuilt hij de aangifte van het volgende kwartaal niet.`;
+    const hint = `<b>BTW-afrekening Q${kwartaal} ${jaar}.</b> ${bron} ${staart} <b>Controleer de regels tegen je ingediende aangifte</b> voor je boekt.`;
+    openMemoriaal(refresh, { hint, initial: { datum: viaTussen ? kwartaalEind() : vandaag(), omschrijving: `BTW-afrekening Q${kwartaal} ${jaar}`, regels } });
   }
 
   // ---------------- Modal: Rente rekening-courant ----------------
