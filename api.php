@@ -59,6 +59,7 @@ switch ($actie) {
             'btwVoorbelasting' => bh_instelling('btw_voorbelasting', '1810'),
             'btwVerschuldigd'  => bh_instelling('btw_verschuldigd', '1910'),
             'betaalrekening'   => bh_instelling('betaalrekening', ''),
+            'btwCheck'         => bh_btw_rekening_check(),
         ]);
     }
 
@@ -173,6 +174,15 @@ switch ($actie) {
         $grootboek = (string) ($in['grootboekrekening'] ?? '');
         $betaal    = (string) ($in['betaalRekening'] ?? '');
         if ($grootboek === '' || $betaal === '') json_response(['fout' => 'Grootboek- en betaalrekening zijn verplicht'], 422);
+        // Optioneel: de BTW meetellen in een ander kwartaal dan de boekingsdatum,
+        // voor een factuur die je pas terugvond toen die aangifte al gedaan was.
+        $btwPeriode = trim((string) ($in['btwPeriode'] ?? ''));
+        if ($btwPeriode !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $btwPeriode)) {
+            json_response(['fout' => 'BTW-periode moet een datum zijn (YYYY-MM-DD)'], 422);
+        }
+        if ($btwPeriode !== '' && $btwPeriode < $datum) {
+            json_response(['fout' => 'De BTW-periode mag niet vóór de boekingsdatum liggen'], 422);
+        }
 
         $check = db()->prepare("SELECT COUNT(*) FROM rekeningen WHERE nummer IN (:a, :b)");
         $check->execute([':a' => $grootboek, ':b' => $betaal]);
@@ -208,10 +218,10 @@ switch ($actie) {
 
         db()->beginTransaction();
         db()->prepare(
-            "INSERT INTO transacties (datum, omschrijving, factuur_nummer, btw_grondslag, btw_bedrag, btw_code, btw_richting)
-             VALUES (:d, :o, :f, :g, :b, :c, :r)"
+            "INSERT INTO transacties (datum, btw_periode, omschrijving, factuur_nummer, btw_grondslag, btw_bedrag, btw_code, btw_richting)
+             VALUES (:d, :p, :o, :f, :g, :b, :c, :r)"
         )->execute([
-            ':d' => $datum, ':o' => $omschrijving,
+            ':d' => $datum, ':p' => $btwPeriode !== '' ? $btwPeriode : null, ':o' => $omschrijving,
             ':f' => ($in['factuurNummer'] ?? '') !== '' ? trim((string) $in['factuurNummer']) : null,
             ':g' => $excl, ':b' => $btwBedrag, ':c' => $btwCode, ':r' => $richting,
         ]);

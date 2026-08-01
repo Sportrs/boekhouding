@@ -22,6 +22,28 @@ function bh_ensure_systeem(): void {
     }
 }
 
+/* Controleer of de ingestelde BTW-rekeningen ook écht BTW-rekeningen zijn.
+ *
+ * De standaard is 1810/1910, maar in het rekeningschema van een accountant kan
+ * 1810 iets heel anders betekenen (bv. "Af te dragen loonheffing"). Omdat
+ * bh_ensure_systeem() met INSERT IGNORE werkt, wordt zo'n bestaande rekening
+ * niet overschreven en boekt de app de BTW stilzwijgend op de verkeerde post.
+ * Dat vervuilt die rekening én laat de BTW uit de aangifte verdwijnen. */
+function bh_btw_rekening_check(): array {
+    $q = db()->prepare("SELECT naam FROM rekeningen WHERE nummer = :n LIMIT 1");
+    $kijk = function (string $nr) use ($q): array {
+        $q->execute([':n' => $nr]);
+        $naam = $q->fetchColumn();
+        if ($naam === false) return ['nummer' => $nr, 'naam' => null, 'bestaat' => false, 'verdacht' => true];
+        $ok = (bool) preg_match('/btw|omzetbelasting/i', (string) $naam);
+        return ['nummer' => $nr, 'naam' => (string) $naam, 'bestaat' => true, 'verdacht' => !$ok];
+    };
+    return [
+        'voorbelasting' => $kijk(bh_instelling('btw_voorbelasting', '1810')),
+        'verschuldigd'  => $kijk(bh_instelling('btw_verschuldigd', '1910')),
+    ];
+}
+
 // Een instelling ophalen / opslaan.
 function bh_instelling(string $sleutel, string $standaard = ''): string {
     $q = db()->prepare("SELECT waarde FROM instellingen WHERE sleutel = :s LIMIT 1");
@@ -59,7 +81,7 @@ function bh_transacties(?string $from = null, ?string $to = null): array {
     $params = [];
     if ($from) { $where[] = 'datum >= :from'; $params[':from'] = $from; }
     if ($to)   { $where[] = 'datum <= :to';   $params[':to']   = $to; }
-    $sql = "SELECT id, datum, omschrijving, factuur_nummer, btw_grondslag, btw_bedrag, btw_code, btw_richting
+    $sql = "SELECT id, datum, btw_periode, omschrijving, factuur_nummer, btw_grondslag, btw_bedrag, btw_code, btw_richting
             FROM transacties";
     if ($where) $sql .= ' WHERE ' . implode(' AND ', $where);
     $sql .= ' ORDER BY datum DESC, id DESC';
@@ -88,8 +110,12 @@ function bh_transacties(?string $from = null, ?string $to = null): array {
         $t['btwBedrag']     = $t['btw_bedrag']    !== null ? (float) $t['btw_bedrag']    : null;
         $t['btwCode']       = $t['btw_code'];
         $t['btwRichting']   = $t['btw_richting'];
+        // btwPeriode = handmatig naar een ander kwartaal geschoven (leeg = niet).
+        // btwDatum   = de datum waarop de BTW-aangifte deze boeking meetelt.
+        $t['btwPeriode']    = $t['btw_periode'] ?: null;
+        $t['btwDatum']      = $t['btw_periode'] ?: $t['datum'];
         $t['regels']        = $regelsPer[$t['id']] ?? [];
-        unset($t['factuur_nummer'], $t['btw_grondslag'], $t['btw_bedrag'], $t['btw_code'], $t['btw_richting']);
+        unset($t['factuur_nummer'], $t['btw_grondslag'], $t['btw_bedrag'], $t['btw_code'], $t['btw_richting'], $t['btw_periode']);
     }
     return $tx;
 }
@@ -213,8 +239,10 @@ function bh_btw(int $kwartaal, int $jaar): array {
     ['from' => $from, 'to' => $to] = bh_kwartaal_grenzen($kwartaal, $jaar);
     $tx = bh_transacties();
 
+    // Op btwDatum filteren, niet op datum: een te laat geboekte factuur kan
+    // handmatig naar een later kwartaal zijn geschoven (zie migratie 012).
     $inKwartaal = array_values(array_filter($tx, function ($t) use ($from, $to) {
-        return $t['datum'] >= $from && $t['datum'] <= $to
+        return $t['btwDatum'] >= $from && $t['btwDatum'] <= $to
             && $t['btwBedrag'] !== null && $t['btwRichting'] !== null;
     }));
 
@@ -261,7 +289,7 @@ function bh_btw_grootboek(int $kwartaal, int $jaar): array {
          FROM transactie_regels r
          JOIN transacties t ON t.id = r.transactie_id
          JOIN rekeningen  k ON k.nummer = r.rekening
-         WHERE t.datum BETWEEN :f AND :t
+         WHERE COALESCE(t.btw_periode, t.datum) BETWEEN :f AND :t
            AND (k.naam LIKE '%BTW%' OR k.naam LIKE '%omzetbelasting%')
          GROUP BY r.rekening, k.naam
          HAVING deb <> 0 OR cred <> 0

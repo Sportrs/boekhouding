@@ -566,7 +566,7 @@
       const teBetalen = d.saldo >= 0;
       const rij = (label, g, b) => `<tr><td>${label}</td><td class="num mut">${g != null ? euro(g) : ''}</td><td class="num" style="color:var(--ink)">${euro(b)}</td></tr>`;
       const txRows = d.transacties.length ? d.transacties.map((t) => `<tr>
-          <td class="num" style="text-align:left">${datumNL(t.datum)}</td><td>${esc(t.omschrijving)}</td>
+          <td class="num" style="text-align:left">${datumNL(t.datum)}</td><td>${esc(t.omschrijving)}${t.btwPeriode ? ` <span class="badge" style="color:var(--warning)" title="De boeking staat op ${datumNL(t.datum)}; de BTW is handmatig in dit kwartaal meegenomen">↷ verschoven</span>` : ''}</td>
           <td class="mut" style="font-size:12px">${t.btwRichting === 'afdracht' ? 'afdracht' : 'vordering'} ${esc(t.btwCode)}%</td>
           <td class="num" style="color:var(--ink)">${euro(t.btwBedrag || 0)}</td></tr>`).join('')
         : `<tr><td colspan="4" class="empty">Geen boekingen.</td></tr>`;
@@ -619,7 +619,7 @@
     }
     async function rerender() {
       const tabs = `<div class="tabs page-actions">${[1, 2, 3, 4].map((q) => `<button data-q="${q}" class="${q === kwartaal ? 'active' : ''}">Q${q}</button>`).join('')}</div>`;
-      view.innerHTML = pageHead('BTW-aangifte', `Omzetbelasting per kwartaal — ${jaar}`, tabs) + (await load()) + faqBlock('btw');
+      view.innerHTML = pageHead('BTW-aangifte', `Omzetbelasting per kwartaal — ${jaar}`, tabs) + btwRekeningWaarschuwing() + (await load()) + faqBlock('btw');
       view.querySelectorAll('[data-q]').forEach((b) => b.addEventListener('click', () => { kwartaal = Number(b.dataset.q); rerender(); }));
       const afdr = document.getElementById('afdracht');
       if (afdr) afdr.onclick = () => openBtwAfdracht(data, kwartaal, jaar, () => rerender());
@@ -1507,6 +1507,7 @@
       </div>
       <div class="card p5" style="margin-bottom:24px">
         <h2 style="font-size:14px;font-weight:500;color:var(--inkdim);margin:0 0 4px">BTW-rekeningen</h2>
+        ${btwRekeningWaarschuwing()}
         <p class="mut" style="font-size:12px;margin:0 0 16px;max-width:640px;line-height:1.5">Op welke grootboekrekeningen boekt de app de BTW van je in- en verkoopfacturen? Standaard <b>1810</b>/<b>1910</b>. Zet ze op de rekeningen van je boekhouder (bv. <b>1520</b> te vorderen, <b>1500</b> af te dragen) zodat je eigen boekingen aansluiten op het rekeningschema. De BTW-<i>aangifte</i> zelf verandert hier niet van.</p>
         <div class="row" style="max-width:640px">
           <label class="field"><span>Voorbelasting (te vorderen BTW)</span><select id="btwVoor">${btwOpt(s.btwVoorbelasting)}</select></label>
@@ -1786,6 +1787,26 @@
     return oms.toLowerCase().includes(lev.toLowerCase()) ? oms : lev + ' — ' + oms;
   }
 
+  /* Kwartalen waarin je de BTW van deze boeking kunt meenemen: vanaf het kwartaal
+     van de boekingsdatum t/m één kwartaal na nu. Een factuur uit maart die je in
+     augustus terugvindt kun je zo in Q3 meenemen, want Q1 is allang aangegeven. */
+  function btwKwartaalOpties(datum) {
+    const qVan = (j, m) => ({ jaar: j, q: Math.floor((m - 1) / 3) + 1 });
+    const d = String(datum || '').match(/^(\d{4})-(\d{2})/);
+    const nu = new Date();
+    let cur = d ? qVan(Number(d[1]), Number(d[2])) : qVan(nu.getFullYear(), nu.getMonth() + 1);
+    const eind = qVan(nu.getFullYear(), nu.getMonth() + 1);
+    // Eén kwartaal ná nu erbij, zodat je vooruit kunt schuiven als de aangifte al loopt.
+    let eindJaar = eind.jaar, eindQ = eind.q + 1;
+    if (eindQ > 4) { eindQ = 1; eindJaar++; }
+    const uit = [];
+    while ((cur.jaar < eindJaar || (cur.jaar === eindJaar && cur.q <= eindQ)) && uit.length < 16) {
+      uit.push({ waarde: `${cur.jaar}-${String((cur.q - 1) * 3 + 1).padStart(2, '0')}-01`, label: `Q${cur.q} ${cur.jaar}` });
+      cur = cur.q === 4 ? { jaar: cur.jaar + 1, q: 1 } : { jaar: cur.jaar, q: cur.q + 1 };
+    }
+    return uit;
+  }
+
   function openBoeking(initial, initialType, opts) {
     opts = opts || {};
     const accounts = state.accounts;
@@ -1805,6 +1826,8 @@
       betaal: (opts.betaal) || betaalRek(banken) || (banken.find((a) => a.isBank) || banken.find((a) => /bank|bunq/i.test(a.naam)) || banken[0] || {}).nummer || '',
       // Waarom de kostenrekening is voorgevuld — leeg = gewoon de eerste uit de lijst.
       tip: (initial && initial.voorstelTip) || '',
+      // Leeg = de BTW telt mee in het kwartaal van de boekingsdatum (het normale geval).
+      btwPeriode: (initial && initial.btwPeriode) || '',
     };
 
     const ov = document.createElement('div');
@@ -1860,6 +1883,11 @@
             <label class="field"><span>Betaald via</span><select id="bet">${opties(banken, st.betaal)}</select></label>
           </div>
           ${st.tip ? `<div class="mut" style="font-size:12px;line-height:1.45;color:var(--warning)">↳ voorgesteld: ${esc(st.tip)}. Controleer het even en pas het aan als het niet klopt.</div>` : ''}
+          ${st.pct !== 'geen' ? `<label class="field"><span>BTW meenemen in aangifte</span><select id="btwper">
+            <option value="">kwartaal van de boekingsdatum hierboven</option>
+            ${btwKwartaalOpties(st.datum).map((o) => `<option value="${o.waarde}" ${st.btwPeriode === o.waarde ? 'selected' : ''}>${o.label}</option>`).join('')}
+          </select></label>
+          <div class="mut" style="font-size:12px;line-height:1.45">Vind je een <b style="color:var(--inkdim)">oude factuur</b> terug waarvan de aangifte al gedaan is? Laat de <b style="color:var(--inkdim)">datum</b> op de factuurdatum staan (daar hoort hij in je grootboek) en kies hier het kwartaal waarin de BTW mee moet. Normaal laat je dit op de standaard staan.</div>` : ''}
           <div class="mut" style="font-size:12px;line-height:1.45">BTW-regime: <b style="color:var(--inkdim)">21/9/0%</b> = Nederland · <b style="color:var(--inkdim)">geen (buitenland)</b> = niet-EU (bv. Anthropic, VS) · <b style="color:var(--inkdim)">verlegd (EU)</b> = EU-diensten (bv. Google/Microsoft, Ierland). Weet je het niet zeker? Kies 21% of vraag je boekhouder.</div>
           <div class="preview"><div class="h">Journaalpost-preview (zo wordt het geboekt)</div>
             <table><thead><tr><th style="padding:4px 16px">Rekening</th><th class="r" style="padding:4px 16px">Debet</th><th class="r" style="padding:4px 16px">Credit</th></tr></thead>
@@ -1873,6 +1901,7 @@
       const bind = (id, key) => { const el = ov.querySelector('#' + id); el.oninput = () => { st[key] = el.value; if (['bedrag', 'pct', 'grootboek', 'betaal'].includes(key)) ov.querySelector('#prev').innerHTML = preview(); }; el.onchange = el.oninput; };
       bind('datum', 'datum'); bind('fn', 'factuurNummer'); bind('oms', 'omschrijving');
       bind('bedrag', 'bedrag'); bind('pct', 'pct'); bind('gb', 'grootboek'); bind('bet', 'betaal');
+      if (ov.querySelector('#btwper')) bind('btwper', 'btwPeriode');
 
       const pf = ov.querySelector('#pdffile');
       ov.querySelector('#pdf').onclick = () => pf.click();
@@ -1904,7 +1933,7 @@
       if (!st.omschrijving.trim()) return toast('Vul een omschrijving in', 'error');
       if (!st.grootboek || !st.betaal) return toast('Kies de rekeningen', 'error');
       try {
-        const r = await api('boeking', { datum: st.datum, omschrijving: st.omschrijving, factuurNummer: st.factuurNummer, type: st.type, bedragExBTW: excl, btwPercentage: st.pct, grootboekrekening: st.grootboek, betaalRekening: st.betaal }, 'POST');
+        const r = await api('boeking', { datum: st.datum, omschrijving: st.omschrijving, factuurNummer: st.factuurNummer, type: st.type, bedragExBTW: excl, btwPercentage: st.pct, grootboekrekening: st.grootboek, betaalRekening: st.betaal, btwPeriode: st.pct === 'geen' ? '' : st.btwPeriode }, 'POST');
         toast('Boeking opgeslagen ✓'); close();
         if (opts.onSaved) await opts.onSaved(r.id); else renderRoute();
       } catch (e) { toast(e.message, 'error'); }
@@ -2026,16 +2055,39 @@
     const verschuldigd = round2(d.verschuldigd || 0);
     const voorbelasting = round2(d.rubriek5b || 0);
     const saldo = round2(d.saldo != null ? d.saldo : verschuldigd - voorbelasting);
-    if (Math.abs(verschuldigd) < 0.005 && Math.abs(voorbelasting) < 0.005) return toast('Geen BTW in dit kwartaal om af te rekenen', 'error');
     const bank = (state.accounts.find((a) => a.isBank) || state.accounts.find((a) => /bunq|bank/i.test(a.naam)) || {}).nummer || '';
-    const regels = [];
     const rVersch = btwVerschRek(), rVoor = btwVoorRek();
-    if (verschuldigd) regels.push({ rekening: rVersch, debet: verschuldigd, credit: 0 }); // schuld verrekenen
-    if (voorbelasting) regels.push({ rekening: rVoor, debet: 0, credit: voorbelasting }); // vordering verrekenen
-    if (saldo > 0.005) regels.push({ rekening: bank, debet: 0, credit: saldo });           // betaling aan Belastingdienst
-    else if (saldo < -0.005) regels.push({ rekening: bank, debet: -saldo, credit: 0 });     // teruggaaf van Belastingdienst
-    const teBetalen = saldo >= 0;
-    const hint = `<b>BTW-afrekening Q${kwartaal} ${jaar}.</b> Je verrekent de verschuldigde BTW (${euro(verschuldigd)} op ${esc(rVersch)}) met de voorbelasting (${euro(voorbelasting)} op ${esc(rVoor)}). Het saldo van <b>${euro(Math.abs(saldo))}</b> ${teBetalen ? 'betaal je aan' : 'ontvang je van'} de Belastingdienst via de bank. Zo lopen ${esc(rVoor)} én ${esc(rVersch)} weer naar 0. Controleer de bankrekening en zet de datum op de dag van ${teBetalen ? 'betaling' : 'ontvangst'}.`;
+
+    // Boekingen die uit een XAF-import komen hebben géén BTW-kenmerken, dus de
+    // rubrieken hierboven zien ze niet. De reconstructie uit het grootboek ziet
+    // alle mutaties op de BTW-rekeningen — geïmporteerd én zelf geboekt — en is
+    // dus leidend zodra die afwijkt. Anders zou je hier het verkeerde bedrag boeken.
+    const gb = d.grootboek || { rekeningen: [], teBetalen: 0 };
+    const gbRek = (gb.rekeningen || []).filter((r) => r.soort !== 'verrekening' && Math.abs(r.bijdrage) >= 0.005);
+    const gbSaldo = round2(gb.teBetalen || 0);
+    // Ook als het saldo toevallig 0 is kan er van alles openstaan dat naar 0 moet.
+    const rubriekLeeg = Math.abs(verschuldigd) < 0.005 && Math.abs(voorbelasting) < 0.005;
+    const uitGrootboek = gbRek.length > 0 && (rubriekLeeg || Math.abs(gbSaldo - saldo) >= 0.005);
+
+    const eindSaldo = uitGrootboek ? gbSaldo : saldo;
+    if (!uitGrootboek && rubriekLeeg) return toast('Geen BTW in dit kwartaal om af te rekenen', 'error');
+    const regels = [];
+    if (uitGrootboek) {
+      // Elke BTW-rekening terugboeken naar 0: stond hij credit, dan nu debet en andersom.
+      gbRek.forEach((r) => regels.push(r.bijdrage > 0
+        ? { rekening: r.nummer, debet: round2(r.bijdrage), credit: 0 }
+        : { rekening: r.nummer, debet: 0, credit: round2(-r.bijdrage) }));
+    } else {
+      if (verschuldigd) regels.push({ rekening: rVersch, debet: verschuldigd, credit: 0 }); // schuld verrekenen
+      if (voorbelasting) regels.push({ rekening: rVoor, debet: 0, credit: voorbelasting }); // vordering verrekenen
+    }
+    if (eindSaldo > 0.005) regels.push({ rekening: bank, debet: 0, credit: eindSaldo });      // betaling aan Belastingdienst
+    else if (eindSaldo < -0.005) regels.push({ rekening: bank, debet: -eindSaldo, credit: 0 }); // teruggaaf van Belastingdienst
+
+    const teBetalen = eindSaldo >= 0;
+    const hint = uitGrootboek
+      ? `<b>BTW-afrekening Q${kwartaal} ${jaar} — op basis van het grootboek.</b> De rubriekentabel komt op ${euro(Math.abs(saldo))}, maar die telt alleen boekingen die je <b>in deze app</b> hebt gemaakt. Boekingen uit een <b>XAF-import</b> (van je accountant) dragen geen BTW-kenmerken en missen daar dus. De mutaties op je BTW-rekeningen tellen op tot <b>${euro(Math.abs(gbSaldo))}</b> ${teBetalen ? 'te betalen' : 'te ontvangen'} — dat is het volledige beeld, dus daar gaan we van uit. Elke BTW-rekening wordt hieronder naar 0 teruggeboekt tegen de bank. <b>Controleer de regels tegen je aangifte</b> voor je boekt, en zet de datum op de dag van ${teBetalen ? 'betaling' : 'ontvangst'}.`
+      : `<b>BTW-afrekening Q${kwartaal} ${jaar}.</b> Je verrekent de verschuldigde BTW (${euro(verschuldigd)} op ${esc(rVersch)}) met de voorbelasting (${euro(voorbelasting)} op ${esc(rVoor)}). Het saldo van <b>${euro(Math.abs(saldo))}</b> ${teBetalen ? 'betaal je aan' : 'ontvang je van'} de Belastingdienst via de bank. Zo lopen ${esc(rVoor)} én ${esc(rVersch)} weer naar 0. Controleer de bankrekening en zet de datum op de dag van ${teBetalen ? 'betaling' : 'ontvangst'}.`;
     openMemoriaal(refresh, { hint, initial: { datum: vandaag(), omschrijving: `BTW-afrekening Q${kwartaal} ${jaar}`, regels } });
   }
 
@@ -2155,6 +2207,21 @@
   // Instelbare BTW-grootboekrekeningen (default 1810/1910).
   function btwVoorRek() { return (state.settings && state.settings.btwVoorbelasting) || '1810'; }
   function btwVerschRek() { return (state.settings && state.settings.btwVerschuldigd) || '1910'; }
+  /* Rood alarm als de ingestelde BTW-rekeningen geen BTW-rekeningen blijken te zijn.
+     Standaard is 1810/1910, maar in het schema van een accountant kan 1810 bijvoorbeeld
+     "Af te dragen loonheffing" zijn — dan boekt de app de BTW stilzwijgend verkeerd. */
+  function btwRekeningWaarschuwing() {
+    const c = (state.settings && state.settings.btwCheck) || null;
+    if (!c) return '';
+    const fout = [
+      ['voorbelasting', 'Voorbelasting (te vorderen BTW)', c.voorbelasting],
+      ['verschuldigd', 'Verschuldigd (af te dragen BTW)', c.verschuldigd],
+    ].filter(([, , v]) => v && v.verdacht);
+    if (!fout.length) return '';
+    return `<div class="help" style="border-color:rgba(239,68,68,.5);background:rgba(239,68,68,.12);margin-bottom:16px">
+      <b>Let op — controleer je BTW-rekeningen.</b> De app boekt de BTW van je facturen op ${fout.map(([, label, v]) => `<b>${esc(v.nummer)}</b> ${v.bestaat ? `(“${esc(v.naam)}”)` : '(bestaat niet)'} voor <i>${esc(label.toLowerCase())}</i>`).join(' en ')}. Die naam wijst niet op een BTW-rekening, dus waarschijnlijk staat dit verkeerd ingesteld — de BTW belandt dan op de verkeerde grootboekrekening en verdwijnt uit je aangifte.
+      Zet ze goed bij <a href="#/instellingen" style="color:var(--brand)">Instellingen → BTW-rekeningen</a> en corrigeer de boekingen die er al op staan.</div>`;
+  }
   /* De rekening waarmee je vrijwel alles betaalt (Instellingen → Standaard betaalrekening).
      Zonder instelling viel de keuze op de eerste rekening met de bank-vlag — vaak de kas.
      $lijst = de rekeningen die in "Betaald via" staan; buiten die lijst kiezen we niets. */
