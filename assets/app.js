@@ -383,7 +383,7 @@
     let filter = 'open';
     function bankRekening() {
       const b = state.accounts.filter((a) => a.type === 'actief' && !a.systeem);
-      return (b.find((a) => a.isBank) || b.find((a) => /bunq|bank/i.test(a.naam)) || b[0] || {}).nummer || '';
+      return betaalRek(b) || (b.find((a) => a.isBank) || b.find((a) => /bunq|bank/i.test(a.naam)) || b[0] || {}).nummer || '';
     }
     async function boekVanBank(line) {
       const regime = line.btw_regime || '21';
@@ -1485,6 +1485,8 @@
     const TYPE = { actief: 'Actief', passief: 'Passief', kosten: 'Kosten', opbrengsten: 'Opbrengsten' };
     const btwAccs = state.accounts.filter((a) => /btw|omzetbelasting/i.test(a.naam) || a.nummer === s.btwVoorbelasting || a.nummer === s.btwVerschuldigd).sort((a, b) => String(a.nummer).localeCompare(String(b.nummer)));
     const btwOpt = (sel) => btwAccs.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === sel ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('');
+    // Dezelfde lijst als de keuzelijst "Betaald via" in het boekingsscherm.
+    const betaalAccs = state.accounts.filter((a) => a.type === 'actief' && !a.systeem);
     const rekRows = state.accounts.map((a) => `<tr>
         <td class="num klik" style="text-align:left" data-kaart="${esc(a.nummer)}" title="Bekijk verloop / grootboekkaart">${esc(a.nummer)}</td>
         <td class="klik" data-kaart="${esc(a.nummer)}">${esc(a.naam)}${a.systeem ? '<span class="badge">systeem</span>' : ''}${a.isBank ? '<span class="badge" style="color:var(--brand)">bank</span>' : ''}</td>
@@ -1511,6 +1513,14 @@
           <label class="field"><span>Verschuldigd (af te dragen BTW)</span><select id="btwVersch">${btwOpt(s.btwVerschuldigd)}</select></label>
         </div>
         <button class="btn btn-brand" id="saveBtw" style="margin-top:16px">Opslaan</button>
+      </div>
+      <div class="card p5" style="margin-bottom:24px">
+        <h2 style="font-size:14px;font-weight:500;color:var(--inkdim);margin:0 0 4px">Standaard betaalrekening</h2>
+        <p class="mut" style="font-size:12px;margin:0 0 16px;max-width:640px;line-height:1.5">Welke rekening staat vooringevuld bij <b>Betaald via</b> als je een factuur boekt? Zet dit op de rekening waarmee je vrijwel alles betaalt. Zonder keuze pakt de app de eerste rekening met de bank-vlag, en dat is nogal eens de kas. Boek je een factuur vanaf de <b>Bank</b>-pagina, of heb je die leverancier eerder van een andere rekening betaald, dan wint dat — dit is alleen de terugval.</p>
+        <div class="row" style="max-width:640px">
+          <label class="field"><span>Betaald via</span><select id="betaalRek"><option value="">— geen voorkeur —</option>${betaalAccs.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === s.betaalrekening ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}${a.isBank ? ' (bank)' : ''}</option>`).join('')}</select></label>
+        </div>
+        <button class="btn btn-brand" id="saveBetaal" style="margin-top:16px">Opslaan</button>
       </div>
       <div class="card p5" style="margin-bottom:24px">
         <h2 style="font-size:14px;font-weight:500;color:var(--inkdim);margin:0 0 4px">Anthropic API-sleutel</h2>
@@ -1540,6 +1550,12 @@
       try {
         await api('instellingen_opslaan', { btwVoorbelasting: document.getElementById('btwVoor').value, btwVerschuldigd: document.getElementById('btwVersch').value }, 'POST');
         toast('BTW-rekeningen opgeslagen ✓'); await loadSettings();
+      } catch (e) { toast(e.message, 'error'); }
+    });
+    document.getElementById('saveBetaal').addEventListener('click', async () => {
+      try {
+        await api('instellingen_opslaan', { betaalrekening: document.getElementById('betaalRek').value }, 'POST');
+        toast('Standaard betaalrekening opgeslagen ✓'); await loadSettings();
       } catch (e) { toast(e.message, 'error'); }
     });
     document.getElementById('saveKey').addEventListener('click', async () => {
@@ -1786,7 +1802,7 @@
       bedrag: initial && initial.bedragExBTW != null ? String(initial.bedragExBTW) : '',
       pct: (initial && initial.btwRegime === 'geen') ? 'geen' : (initial && initial.btwPercentage != null ? String(initial.btwPercentage) : '21'),
       grootboek: (initial && initial.grootboekrekening) || (kosten[0] ? kosten[0].nummer : ''),
-      betaal: (opts.betaal) || (banken.find((a) => a.isBank) || banken.find((a) => /bank|bunq/i.test(a.naam)) || banken[0] || {}).nummer || '',
+      betaal: (opts.betaal) || betaalRek(banken) || (banken.find((a) => a.isBank) || banken.find((a) => /bank|bunq/i.test(a.naam)) || banken[0] || {}).nummer || '',
       // Waarom de kostenrekening is voorgevuld — leeg = gewoon de eerste uit de lijst.
       tip: (initial && initial.voorstelTip) || '',
     };
@@ -2139,6 +2155,14 @@
   // Instelbare BTW-grootboekrekeningen (default 1810/1910).
   function btwVoorRek() { return (state.settings && state.settings.btwVoorbelasting) || '1810'; }
   function btwVerschRek() { return (state.settings && state.settings.btwVerschuldigd) || '1910'; }
+  /* De rekening waarmee je vrijwel alles betaalt (Instellingen → Standaard betaalrekening).
+     Zonder instelling viel de keuze op de eerste rekening met de bank-vlag — vaak de kas.
+     $lijst = de rekeningen die in "Betaald via" staan; buiten die lijst kiezen we niets. */
+  function betaalRek(lijst) {
+    const nr = (state.settings && state.settings.betaalrekening) || '';
+    if (!nr) return '';
+    return (!lijst || lijst.some((a) => a.nummer === nr)) ? nr : '';
+  }
 
   // Duidelijke melding na een bankimport: alleen nieuwe regels tellen, dubbele worden genegeerd.
   function importMelding(r) {

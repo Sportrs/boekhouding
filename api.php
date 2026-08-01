@@ -58,6 +58,7 @@ switch ($actie) {
             'apiKeyFromConfig' => (bool) $configKey,
             'btwVoorbelasting' => bh_instelling('btw_voorbelasting', '1810'),
             'btwVerschuldigd'  => bh_instelling('btw_verschuldigd', '1910'),
+            'betaalrekening'   => bh_instelling('betaalrekening', ''),
         ]);
     }
 
@@ -75,6 +76,16 @@ switch ($actie) {
                 if (!(int) $q->fetchColumn()) json_response(['fout' => "BTW-rekening $nr bestaat niet"], 422);
                 bh_instelling_zet($sleutel, $nr);
             }
+        }
+        // Standaard betaalrekening ("betaald via" bij een nieuwe boeking). Leeg = geen voorkeur.
+        if (isset($in['betaalrekening'])) {
+            $nr = trim((string) $in['betaalrekening']);
+            if ($nr !== '') {
+                $q = db()->prepare("SELECT COUNT(*) FROM rekeningen WHERE nummer = :n");
+                $q->execute([':n' => $nr]);
+                if (!(int) $q->fetchColumn()) json_response(['fout' => "Rekening $nr bestaat niet"], 422);
+            }
+            bh_instelling_zet('betaalrekening', $nr);
         }
         json_response(['ok' => true]);
     }
