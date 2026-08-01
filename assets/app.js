@@ -411,7 +411,8 @@
         } catch { /* voorstel is een extraatje — bij een fout gewoon leeg laten */ }
       }
       // De bankrekening staat vast: deze boeking hoort bij díé bankregel.
-      openBoeking(initial, type, { betaal: bankRekening(), betaalVast: true, gbVast, onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Betaling afgeletterd ✓'); laad(); } });
+      // incl geven we mee zodat een PDF in vreemde valuta het bankbedrag niet overschrijft.
+      openBoeking(initial, type, { betaal: bankRekening(), betaalVast: true, gbVast, bankBedrag: round2(incl), onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Betaling afgeletterd ✓'); laad(); } });
     }
     // Overboeking / memoriaal: bankregel boeken tegen een vrije tegenrekening
     // (bv. rekening-courant privé, BTW-betaling, overboeking tussen banken).
@@ -1846,6 +1847,8 @@
       tip: (initial && initial.voorstelTip) || '',
       // Leeg = de BTW telt mee in het kwartaal van de boekingsdatum (het normale geval).
       btwPeriode: (initial && initial.btwPeriode) || '',
+      // Gevuld als de PDF een ander bedrag noemt dan er van de bank is afgeschreven.
+      valutaTip: '',
     };
 
     const ov = document.createElement('div');
@@ -1896,6 +1899,7 @@
             <label class="field"><span>Bedrag excl. BTW</span><input class="num" id="bedrag" value="${esc(st.bedrag)}" placeholder="0,00" /></label>
             <label class="field"><span>BTW</span><select id="pct">${pctOpts}</select></label>
           </div>
+          ${st.valutaTip ? `<div class="help" style="border-color:rgba(245,158,11,.5);background:rgba(245,158,11,.12)">⚠ ${st.valutaTip}</div>` : ''}
           <div class="row">
             <label class="field"><span>${st.type === 'inkoop' ? 'Kostenrekening' : 'Omzetrekening'}</span><select id="gb">${opties(gbList, st.grootboek)}</select></label>
             <label class="field"><span>Betaald via</span><select id="bet">${opties(banken, st.betaal)}</select></label>
@@ -1932,7 +1936,20 @@
           if (d.omschrijving || d.leverancier) st.omschrijving = factuurOms(d);
           if (d.factuurNummer) st.factuurNummer = d.factuurNummer;
           if (d.factuurDatum) st.datum = d.factuurDatum;
-          if (d.bedragExBTW) st.bedrag = String(d.bedragExBTW);
+          // Boek je vanaf een bankregel, dan is het bankbedrag leidend. Een factuur
+          // in vreemde valuta (USD) noemt een ander bedrag dan er in euro's van je
+          // rekening is afgeschreven; klakkeloos overnemen zet het dollarbedrag in
+          // je grootboek en dan loopt je banksaldo scheef.
+          if (d.bedragExBTW) {
+            const pdfExcl = round2(Number(d.bedragExBTW) || 0);
+            const pdfTotaal = round2(pdfExcl + (Number(d.btwBedrag) || 0));
+            if (opts.bankBedrag && Math.abs(pdfTotaal - opts.bankBedrag) > 0.02) {
+              st.valutaTip = `De factuur vermeldt <b>${euro(pdfTotaal)}</b>, maar er is <b>${euro(opts.bankBedrag)}</b> van je rekening afgeschreven — meestal een factuur in vreemde valuta. Het <b>bankbedrag</b> is aangehouden, want dat staat écht op je afschrift. Klopt dat niet, pas het dan hieronder aan.`;
+            } else {
+              st.bedrag = String(pdfExcl);
+              st.valutaTip = '';
+            }
+          }
           if (d.btwPercentage != null && st.pct !== 'geen') st.pct = String(d.btwPercentage);
           // Kosten-/omzetrekening en betaalrekening voorstellen op basis van de leverancier
           // op de factuur. Een keuze die al vaststaat (leverancier-instelling, of de bank
