@@ -253,14 +253,18 @@ function bh_btw(int $kwartaal, int $jaar): array {
     };
     $afdracht21 = fn($t) => $t['btwRichting'] === 'afdracht' && $t['btwCode'] === '21';
     $afdracht9  = fn($t) => $t['btwRichting'] === 'afdracht' && $t['btwCode'] === '9';
+    // Verlegde BTW staat twee keer in de aangifte: verschuldigd (4a of 4b) én
+    // aftrekbaar (5b). 4a = van buiten de EU, 4b = uit de EU.
+    $verlegd4a  = fn($t) => $t['btwRichting'] === 'verlegd4a';
     $verlegd    = fn($t) => $t['btwRichting'] === 'verlegd';
-    $voorbelasting = fn($t) => $t['btwRichting'] === 'vordering' || $t['btwRichting'] === 'verlegd';
+    $voorbelasting = fn($t) => in_array($t['btwRichting'], ['vordering', 'verlegd', 'verlegd4a'], true);
 
     $r1a = ['grondslag' => $som($afdracht21, 'btwGrondslag'), 'btw' => $som($afdracht21, 'btwBedrag')];
     $r1b = ['grondslag' => $som($afdracht9,  'btwGrondslag'), 'btw' => $som($afdracht9,  'btwBedrag')];
+    $r4a = ['grondslag' => $som($verlegd4a,  'btwGrondslag'), 'btw' => $som($verlegd4a,  'btwBedrag')];
     $r4b = ['grondslag' => $som($verlegd,    'btwGrondslag'), 'btw' => $som($verlegd,    'btwBedrag')];
     $r5b = $som($voorbelasting, 'btwBedrag');
-    $verschuldigd = centen($r1a['btw'] + $r1b['btw'] + $r4b['btw']);
+    $verschuldigd = centen($r1a['btw'] + $r1b['btw'] + $r4a['btw'] + $r4b['btw']);
 
     return [
         'kwartaal'    => $kwartaal,
@@ -271,6 +275,7 @@ function bh_btw(int $kwartaal, int $jaar): array {
         'rubriek1b'   => $r1b,
         'rubriek1c'   => ['grondslag' => 0, 'btw' => 0],
         'rubriek1d'   => ['grondslag' => 0, 'btw' => 0],
+        'rubriek4a'   => $r4a,
         'rubriek4b'   => $r4b,
         'rubriek5b'   => $r5b,
         'verschuldigd'=> $verschuldigd,
@@ -341,6 +346,15 @@ function bh_dashboard(): array {
     $kwartaal = (int) floor(((int) date('n') - 1) / 3) + 1;
     $jaar = (int) date('Y');
     $btw = bh_btw($kwartaal, $jaar);
+    // Zelfde afweging als de BTW-pagina: geïmporteerde boekingen (XAF) dragen geen
+    // BTW-kenmerken, dus de rubrieken zien ze niet. Wijkt de reconstructie uit het
+    // grootboek af, dan is die het volledige beeld — anders staat hier een ander
+    // bedrag dan op de BTW-pagina zelf.
+    $btwGb = bh_btw_grootboek($kwartaal, $jaar);
+    $btwSaldo = $btw['saldo'];
+    $gbBeweegt = false;
+    foreach ($btwGb['rekeningen'] as $r) if ($r['soort'] !== 'verrekening') { $gbBeweegt = true; break; }
+    if ($gbBeweegt && abs($btwGb['teBetalen'] - $btwSaldo) >= 0.005) $btwSaldo = $btwGb['teBetalen'];
 
     return [
         'boekjaar'          => $boekjaar,
@@ -349,7 +363,7 @@ function bh_dashboard(): array {
         'omzetBoekjaar'     => $wenv['totaalOpbrengsten'],
         'kostenBoekjaar'    => $wenv['totaalKosten'],
         'resultaatBoekjaar' => $wenv['resultaat'],
-        'huidigKwartaal'    => ['kwartaal' => $kwartaal, 'jaar' => $jaar, 'saldo' => $btw['saldo']],
+        'huidigKwartaal'    => ['kwartaal' => $kwartaal, 'jaar' => $jaar, 'saldo' => centen($btwSaldo)],
         'recenteBoekingen'  => array_slice($tx, 0, 6),
     ];
 }

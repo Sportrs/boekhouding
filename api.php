@@ -170,10 +170,12 @@ switch ($actie) {
         $excl = centen((float) ($in['bedragExBTW'] ?? 0));
         if (!($excl > 0)) json_response(['fout' => 'Bedrag excl. BTW moet groter dan 0 zijn'], 422);
         $regime = (string) ($in['btwPercentage'] ?? '');
-        $geenBtw = ($regime === 'geen');           // buitenland: geen NL BTW, niet in aangifte
-        $verlegd = ($regime === 'verlegd');        // BTW verlegd (EU): rubriek 4b + voorbelasting 5b, saldeert naar 0
+        $geenBtw = ($regime === 'geen');           // geen NL BTW en niet in de aangifte
+        $verlegd4a = ($regime === 'verlegd_niet_eu'); // diensten van buiten de EU: rubriek 4a
+        $verlegd4b = ($regime === 'verlegd');         // diensten uit de EU: rubriek 4b
+        $verlegd = $verlegd4a || $verlegd4b;       // beide: verschuldigd + voorbelasting, saldeert naar 0
         $pct = $verlegd ? 21 : ($geenBtw ? 0 : (int) $regime);
-        if (!$geenBtw && !$verlegd && !in_array($pct, [21, 9, 0], true)) json_response(['fout' => 'BTW moet 21, 9, 0, geen of verlegd zijn'], 422);
+        if (!$geenBtw && !$verlegd && !in_array($pct, [21, 9, 0], true)) json_response(['fout' => 'BTW moet 21, 9, 0, geen, verlegd of verlegd_niet_eu zijn'], 422);
         $grootboek = (string) ($in['grootboekrekening'] ?? '');
         $betaal    = (string) ($in['betaalRekening'] ?? '');
         if ($grootboek === '' || $betaal === '') json_response(['fout' => 'Grootboek- en betaalrekening zijn verplicht'], 422);
@@ -205,8 +207,8 @@ switch ($actie) {
             $regels[] = [$grootboek, $excl, 0];
             if ($verlegd) {
                 $regels[] = [$btwVoor, $btwBedrag, 0];   // voorbelasting (rubriek 5b)
-                $regels[] = [$btwVersch, 0, $btwBedrag]; // verschuldigde verlegde BTW (rubriek 4b)
-                $richting = 'verlegd';
+                $regels[] = [$btwVersch, 0, $btwBedrag]; // verschuldigde verlegde BTW (rubriek 4a of 4b)
+                $richting = $verlegd4a ? 'verlegd4a' : 'verlegd';
             } else {
                 if ($btwBedrag > 0) $regels[] = [$btwVoor, $btwBedrag, 0];
                 $richting = $geenBtw ? null : 'vordering';

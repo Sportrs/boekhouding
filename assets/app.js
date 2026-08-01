@@ -390,7 +390,7 @@
       const incl = Number(line.bedrag);
       const initial = { datum: line.datum, omschrijving: line.leverancier_naam || line.tegenrekening_naam || line.omschrijving || '', grootboekrekening: line.standaard_rekening || '' };
       if (regime === 'geen') { initial.btwRegime = 'geen'; initial.bedragExBTW = round2(incl); }
-      else if (regime === 'verlegd') { initial.btwPercentage = 'verlegd'; initial.bedragExBTW = round2(incl); }
+      else if (regime === 'verlegd' || regime === 'verlegd_niet_eu') { initial.btwPercentage = regime; initial.bedragExBTW = round2(incl); }
       else { const p = Number(regime) || 0; initial.btwPercentage = String(regime); initial.bedragExBTW = p > 0 ? round2(incl / (1 + p / 100)) : round2(incl); }
       const type = line.afbij === 'af' ? 'inkoop' : 'verkoop';
       // Kostenrekening voorstellen: de leverancier wint, anders kijken we hoe je
@@ -553,7 +553,7 @@
         <label class="field"><span>Zoekterm (herkenning in bankregel)</span><input id="zoek" value="${esc(lev ? (lev.zoekterm || '') : '')}" placeholder="bijv. ANTHROPIC of A2WEBHOST" /></label>
         <div class="row">
           <label class="field"><span>Land</span><input id="land" value="${esc(lev ? (lev.land || '') : '')}" placeholder="NL / US / IE" /></label>
-          <label class="field"><span>BTW-regime</span><select id="regime">${[['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)'], ['verlegd', 'BTW verlegd (EU)']].map(([v, l]) => `<option value="${v}" ${st.btw_regime === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="field"><span>BTW-regime</span><select id="regime">${[['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)'], ['verlegd', 'BTW verlegd — EU (4b)'], ['verlegd_niet_eu', 'BTW verlegd — buiten EU (4a)']].map(([v, l]) => `<option value="${v}" ${st.btw_regime === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         </div>
         <label class="field"><span>Standaard kostenrekening</span><select id="rek"><option value="">— geen —</option>${kosten.map((a) => `<option value="${esc(a.nummer)}" ${st.standaard_rekening === a.nummer ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('')}</select></label>
       </div>
@@ -610,7 +610,8 @@
             ${rij('1b — Omzet laag (9%)', d.rubriek1b.grondslag, d.rubriek1b.btw)}
             ${rij('1c — Overige tarieven', d.rubriek1c.grondslag, d.rubriek1c.btw)}
             ${rij('1d — Privégebruik', d.rubriek1d.grondslag, d.rubriek1d.btw)}
-            ${d.rubriek4b ? rij('4b — Verworven diensten uit EU (verlegd)', d.rubriek4b.grondslag, d.rubriek4b.btw) : ''}
+            ${d.rubriek4a ? rij('4a — Diensten uit landen buiten de EU (verlegd)', d.rubriek4a.grondslag, d.rubriek4a.btw) : ''}
+            ${d.rubriek4b ? rij('4b — Diensten uit landen binnen de EU (verlegd)', d.rubriek4b.grondslag, d.rubriek4b.btw) : ''}
             <tr style="background:rgba(38,52,73,.4)"><td style="font-weight:500;color:var(--inkdim)">5a — Verschuldigde omzetbelasting (1a t/m 4b)</td><td></td><td class="num" style="font-weight:500;color:var(--ink)">${euro(d.verschuldigd)}</td></tr>
             ${rij('5b — Voorbelasting', null, d.rubriek5b)}
             <tr style="background:rgba(38,52,73,.4)"><td style="font-weight:600;color:var(--inkdim)">5c — Subtotaal (5a − 5b)</td><td></td><td class="num ${round2(d.saldo) >= 0 ? 'dan' : 'suc'}" style="font-weight:700">${euro(Math.abs(round2(d.saldo)))} ${round2(d.saldo) >= 0 ? 'te betalen' : 'te ontvangen'}</td></tr>
@@ -1857,7 +1858,8 @@
     ov.className = 'overlay';
     document.body.appendChild(ov);
     function close() { ov.remove(); }
-    const pctNum = () => (st.pct === 'geen' ? 0 : st.pct === 'verlegd' ? 21 : Number(st.pct) || 0);
+    const isVerlegd = (p) => p === 'verlegd' || p === 'verlegd_niet_eu';
+    const pctNum = () => (st.pct === 'geen' ? 0 : isVerlegd(st.pct) ? 21 : Number(st.pct) || 0);
 
     function opties(list, sel) {
       if (!list.length) return '<option value="">— geen rekeningen —</option>';
@@ -1865,7 +1867,7 @@
     }
     function preview() {
       const excl = round2(Number(String(st.bedrag).replace(',', '.')) || 0);
-      const verlegd = st.pct === 'verlegd';
+      const verlegd = isVerlegd(st.pct);
       const btw = st.pct === 'geen' ? 0 : round2((excl * pctNum()) / 100);
       const totaal = round2(excl + (verlegd ? 0 : btw));
       const rgls = [];
@@ -1884,7 +1886,7 @@
     function render() {
       const gbList = st.type === 'inkoop' ? kosten : omzet;
       if (!gbList.find((a) => a.nummer === st.grootboek)) st.grootboek = (gbList[0] || {}).nummer || '';
-      const pctOpts = [['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)'], ['verlegd', 'BTW verlegd (EU)']].map(([v, l]) => `<option value="${v}" ${String(st.pct) === v ? 'selected' : ''}>${l}</option>`).join('');
+      const pctOpts = [['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)'], ['verlegd', 'BTW verlegd — EU (4b)'], ['verlegd_niet_eu', 'BTW verlegd — buiten EU (4a)']].map(([v, l]) => `<option value="${v}" ${String(st.pct) === v ? 'selected' : ''}>${l}</option>`).join('');
       ov.innerHTML = `<div class="modal"><div class="modal-head"><h2>Boeking invoeren</h2><button class="x">✕</button></div>
         <div class="modal-body">
           <div style="display:flex;gap:8px;align-items:stretch">
@@ -1912,7 +1914,7 @@
             ${btwKwartaalOpties(st.datum).map((o) => `<option value="${o.waarde}" ${st.btwPeriode === o.waarde ? 'selected' : ''}>${o.label}</option>`).join('')}
           </select></label>
           <div class="mut" style="font-size:12px;line-height:1.45">Vind je een <b style="color:var(--inkdim)">oude factuur</b> terug waarvan de aangifte al gedaan is? Laat de <b style="color:var(--inkdim)">datum</b> op de factuurdatum staan (daar hoort hij in je grootboek) en kies hier het kwartaal waarin de BTW mee moet. Normaal laat je dit op de standaard staan.</div>` : ''}
-          <div class="mut" style="font-size:12px;line-height:1.45">BTW-regime: <b style="color:var(--inkdim)">21/9/0%</b> = Nederland · <b style="color:var(--inkdim)">geen (buitenland)</b> = niet-EU (bv. Anthropic, VS) · <b style="color:var(--inkdim)">verlegd (EU)</b> = EU-diensten (bv. Google/Microsoft, Ierland). Weet je het niet zeker? Kies 21% of vraag je boekhouder.</div>
+          <div class="mut" style="font-size:12px;line-height:1.45">BTW-regime: <b style="color:var(--inkdim)">21/9/0%</b> = Nederland · <b style="color:var(--inkdim)">geen (buitenland)</b> = niet-EU (bv. Anthropic, VS) · <b style="color:var(--inkdim)">verlegd — EU (4b)</b> = EU-diensten (bv. Google/Microsoft, Ierland) · <b style="color:var(--inkdim)">verlegd — buiten EU (4a)</b> = diensten van buiten de EU waarbij de BTW naar jou is verlegd. Staat er op de factuur wél een BTW-bedrag? Dan is het gewoon 21% en géén verlegging. Weet je het niet zeker, vraag je boekhouder.</div>
           <div class="preview"><div class="h">Journaalpost-preview (zo wordt het geboekt)</div>
             <table><thead><tr><th style="padding:4px 16px">Rekening</th><th class="r" style="padding:4px 16px">Debet</th><th class="r" style="padding:4px 16px">Credit</th></tr></thead>
             <tbody id="prev">${preview()}</tbody></table></div>
