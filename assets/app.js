@@ -1940,14 +1940,21 @@
           // in vreemde valuta (USD) noemt een ander bedrag dan er in euro's van je
           // rekening is afgeschreven; klakkeloos overnemen zet het dollarbedrag in
           // je grootboek en dan loopt je banksaldo scheef.
+          const vreemd = d.valuta && d.valuta !== 'EUR';
           if (d.bedragExBTW) {
             const pdfExcl = round2(Number(d.bedragExBTW) || 0);
             const pdfTotaal = round2(pdfExcl + (Number(d.btwBedrag) || 0));
+            st.valutaTip = '';
             if (opts.bankBedrag && Math.abs(pdfTotaal - opts.bankBedrag) > 0.02) {
-              st.valutaTip = `De factuur vermeldt <b>${euro(pdfTotaal)}</b>, maar er is <b>${euro(opts.bankBedrag)}</b> van je rekening afgeschreven — meestal een factuur in vreemde valuta. Het <b>bankbedrag</b> is aangehouden, want dat staat écht op je afschrift. Klopt dat niet, pas het dan hieronder aan.`;
+              st.valutaTip = `De factuur vermeldt <b>${esc(d.valuta || '')} ${pdfTotaal.toFixed(2)}</b>, maar er is <b>${euro(opts.bankBedrag)}</b> van je rekening afgeschreven${vreemd ? ` — de factuur staat in <b>${esc(d.valuta)}</b>` : ''}. Het <b>bankbedrag</b> is aangehouden, want dat staat écht op je afschrift. Klopt dat niet, pas het dan hieronder aan.`;
+            } else if (vreemd) {
+              // Losse factuur zonder bankregel: we hebben geen eurobedrag om op terug
+              // te vallen, dus alleen waarschuwen. Blind overnemen zet een dollarbedrag
+              // in het grootboek en dan loopt je banksaldo stilletjes scheef.
+              st.bedrag = String(pdfExcl);
+              st.valutaTip = `Deze factuur staat in <b>${esc(d.valuta)}</b>, niet in euro's. Het overgenomen bedrag (<b>${esc(d.valuta)} ${pdfExcl.toFixed(2)}</b>) is dus <b>niet</b> wat er van je rekening is afgeschreven. Vul hieronder het <b>eurobedrag</b> in dat je op je bankafschrift ziet. Tip: boek zulke facturen liever via <b>Bank → Boek</b>, dan pakt de app het eurobedrag vanzelf.`;
             } else {
               st.bedrag = String(pdfExcl);
-              st.valutaTip = '';
             }
           }
           if (d.btwPercentage != null && st.pct !== 'geen') st.pct = String(d.btwPercentage);

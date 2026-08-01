@@ -111,11 +111,14 @@ function ai_lees_factuur(string $base64_pdf): array {
         . "  \"factuurNummer\": \"factuurnummer\",\n"
         . "  \"factuurDatum\": \"YYYY-MM-DD\",\n"
         . "  \"omschrijving\": \"korte omschrijving van de dienst/het product\",\n"
+        . "  \"valuta\": \"EUR\",\n"
         . "  \"bedragExBTW\": 0.00,\n"
         . "  \"btwBedrag\": 0.00,\n"
         . "  \"btwPercentage\": 21\n"
         . "}\n"
-        . "Als er geen BTW is, zet btwBedrag en btwPercentage op 0.";
+        . "Als er geen BTW is, zet btwBedrag en btwPercentage op 0.\n"
+        . "valuta: de ISO-code van de valuta waarin de factuur is opgesteld (EUR, USD, GBP...). "
+        . "Reken NIET om — geef de bedragen zoals ze op de factuur staan.";
 
     $tekst = ai_call([
         ['type' => 'document', 'source' => ['type' => 'base64', 'media_type' => 'application/pdf', 'data' => $base64_pdf]],
@@ -135,6 +138,9 @@ function ai_lees_factuur(string $base64_pdf): array {
         'factuurNummer' => $str($data['factuurNummer'] ?? ''),
         'factuurDatum'  => $str($data['factuurDatum']  ?? ''),
         'omschrijving'  => $str($data['omschrijving']  ?? ''),
+        // Valuta van de factuur. Staat er iets anders dan EUR, dan moet het bedrag
+        // omgerekend worden — de app boekt altijd in euro's.
+        'valuta'        => strtoupper(substr(trim($str($data['valuta'] ?? '')), 0, 3)) ?: 'EUR',
         'bedragExBTW'   => $num($data['bedragExBTW']   ?? 0),
         'btwBedrag'     => $num($data['btwBedrag']     ?? 0),
         'btwPercentage' => $num($data['btwPercentage'] ?? 0),
