@@ -261,11 +261,28 @@ switch ($actie) {
         $pdf = (string) ($in['pdf'] ?? '');
         if (strlen($pdf) < 100) json_response(['fout' => 'Geen geldige PDF (base64) ontvangen'], 422);
         try {
-            json_response(ai_lees_factuur($pdf));
+            $data = ai_lees_factuur($pdf);
+            // Stel meteen een kostenrekening + betaalrekening voor (leverancier of historie).
+            $data['voorstel'] = boeking_voorstel(
+                (string) ($data['leverancier'] ?? ''),
+                (string) ($data['omschrijving'] ?? ''),
+                '',
+                (string) ($in['type'] ?? 'inkoop')
+            );
+            json_response($data);
         } catch (Throwable $e) {
             json_response(['fout' => $e->getMessage()], 502);
         }
     }
+
+    // Voorstel zonder PDF — voor een bankregel waarvan we alleen de tegenpartij kennen.
+    case 'boeking_voorstel':
+        json_response(boeking_voorstel(
+            (string) ($in['leverancier'] ?? ''),
+            (string) ($in['omschrijving'] ?? ''),
+            (string) ($in['iban'] ?? ''),
+            (string) ($in['type'] ?? 'inkoop')
+        ));
 
     // ---------------- Import jaarrekening (fase 1) ----------------
     case 'jaarrekening_lezen': {

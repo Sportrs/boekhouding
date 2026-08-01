@@ -54,6 +54,111 @@ function bank_match_leverancier(string $naam, string $oms, string $iban): ?array
     return null;
 }
 
+/* --------------------------------------------------------------------
+ *  Voorstel voor kostenrekening + betaalrekening
+ *
+ *  Twee bronnen, in volgorde van betrouwbaarheid:
+ *   1. de leverancier, als daar een standaard kostenrekening is ingesteld;
+ *   2. je eigen historie — hoe boekte je deze leverancier de vorige keren?
+ *
+ *  (2) heeft geen enkele instelling nodig: boek je de bunq-factuur één keer
+ *  op 4310 Bankkosten, dan wordt die volgende maand voorgesteld. Er wordt
+ *  nooit automatisch geboekt; dit vult alleen de keuzelijsten voor, en de
+ *  reden wordt in het scherm getoond zodat je hem kunt overrulen.
+ * ------------------------------------------------------------------ */
+
+/* Losse, onderscheidende woorden uit een leveranciersnaam/omschrijving. */
+function bank_zoekwoorden(string $tekst): array {
+    $tekst = mb_strtolower($tekst);
+    $tekst = preg_replace('/[^\p{L}\p{N} ]+/u', ' ', $tekst);
+    // Woorden die op zo ongeveer elke factuur staan en dus niets onderscheiden.
+    $stop = ['de', 'het', 'een', 'van', 'voor', 'aan', 'bij', 'met', 'the', 'and', 'for',
+             'bv', 'nv', 'ltd', 'inc', 'gmbh', 'sarl', 'holding', 'group', 'company',
+             'factuur', 'invoice', 'nota', 'betaling', 'incasso', 'sepa', 'machtiging',
+             'periode', 'maand', 'jaar', 'abonnement', 'subscription', 'kosten', 'nummer'];
+    $uit = [];
+    foreach (explode(' ', $tekst) as $w) {
+        $w = trim($w);
+        if (mb_strlen($w) < 3 || ctype_digit($w) || in_array($w, $stop, true)) continue;
+        $uit[$w] = true;
+    }
+    return array_keys($uit);
+}
+
+/* Meest gebruikte rekening in eerdere boekingen waarvan de omschrijving $term bevat.
+   $soort: 'kosten' | 'opbrengsten' | 'bank'. */
+function bank_historie_rekening(string $term, string $soort): ?array {
+    $term = trim($term);
+    if (mb_strlen($term) < 3) return null;
+    $q = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term) . '%';
+    $waar = $soort === 'bank' ? 'k.is_bank = 1' : 'k.type = :soort';
+    $sql = "SELECT r.rekening, COUNT(*) AS aantal, MAX(t.datum) AS laatst
+              FROM transacties t
+              JOIN transactie_regels r ON r.transactie_id = t.id
+              JOIN rekeningen k        ON k.nummer = r.rekening
+             WHERE $waar AND t.omschrijving LIKE :q
+          GROUP BY r.rekening
+          ORDER BY aantal DESC, laatst DESC
+             LIMIT 1";
+    $st = db()->prepare($sql);
+    $par = [':q' => $q];
+    if ($soort !== 'bank') $par[':soort'] = $soort;
+    $st->execute($par);
+    $row = $st->fetch();
+    if (!$row) return null;
+    return ['rekening' => (string) $row['rekening'], 'aantal' => (int) $row['aantal'], 'term' => $term];
+}
+
+/* Zoek langs steeds algemenere termen tot er een treffer is. */
+function bank_historie_zoek(array $termen, string $soort): ?array {
+    foreach ($termen as $t) {
+        $hit = bank_historie_rekening($t, $soort);
+        if ($hit) return $hit;
+    }
+    return null;
+}
+
+function boeking_voorstel(string $leverancier, string $omschrijving, string $iban = '', string $type = 'inkoop'): array {
+    $leverancier = trim($leverancier);
+    $omschrijving = trim($omschrijving);
+    $soort = $type === 'verkoop' ? 'opbrengsten' : 'kosten';
+    $leeg = ['grootboekrekening' => '', 'betaalrekening' => '', 'bron' => '', 'toelichting' => ''];
+    if ($leverancier === '' && $omschrijving === '' && $iban === '') return $leeg;
+
+    // Volledige naam eerst (meest specifiek), daarna losse woorden.
+    $termen = [];
+    if ($leverancier !== '') $termen[] = $leverancier;
+    foreach (bank_zoekwoorden($leverancier) as $w) $termen[] = $w;
+    foreach (bank_zoekwoorden($omschrijving) as $w) $termen[] = $w;
+    $termen = array_values(array_unique($termen));
+
+    $uit = $leeg;
+
+    // 1. Vaste leverancier met een standaard kostenrekening.
+    $lev = bank_match_leverancier($leverancier, $omschrijving, $iban);
+    if ($lev && !empty($lev['standaard_rekening'])) {
+        $uit['grootboekrekening'] = (string) $lev['standaard_rekening'];
+        $uit['bron'] = 'leverancier';
+        $uit['toelichting'] = 'standaard kostenrekening van leverancier ' . $lev['naam'];
+    } else {
+        // 2. Hoe boekte je dit eerder?
+        $hit = bank_historie_zoek($termen, $soort);
+        if ($hit) {
+            $uit['grootboekrekening'] = $hit['rekening'];
+            $uit['bron'] = 'historie';
+            $uit['toelichting'] = $hit['aantal'] === 1
+                ? 'zo boekte je "' . $hit['term'] . '" de vorige keer'
+                : 'zo boekte je "' . $hit['term'] . '" de vorige ' . $hit['aantal'] . ' keer';
+        }
+    }
+
+    // Betaalrekening altijd uit de historie: welke bankrekening gebruikte je hiervoor?
+    $bank = bank_historie_zoek($termen, 'bank');
+    if ($bank) $uit['betaalrekening'] = $bank['rekening'];
+
+    return $uit;
+}
+
 // --- Bankimport (MT940 of ING CSV) -----------------------------------
 function bank_importeer(string $inhoud): array {
     require_once __DIR__ . '/mt940.php';

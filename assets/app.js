@@ -294,9 +294,14 @@
       dropText.innerHTML = '<div class="brand">Factuur wordt uitgelezen door de AI…</div>';
       try {
         const b64 = await fileToB64(file);
-        const data = await api('factuur_lezen', { pdf: b64 }, 'POST');
+        const data = await api('factuur_lezen', { pdf: b64, type: 'inkoop' }, 'POST');
         toast('Factuur uitgelezen ✓');
-        openBoeking(data, 'inkoop');
+        // Kostenrekening + betaalrekening voorvullen op basis van de leverancier
+        // (leverancier-instelling of hoe je die eerder boekte).
+        const v = data.voorstel || {};
+        data.omschrijving = factuurOms(data);
+        if (v.grootboekrekening) { data.grootboekrekening = v.grootboekrekening; data.voorstelTip = v.toelichting || ''; }
+        openBoeking(data, 'inkoop', v.betaalrekening ? { betaal: v.betaalrekening } : {});
       } catch (e) { toast(e.message, 'error'); }
       finally { dropText.innerHTML = '<div style="color:var(--ink)">Sleep een PDF-factuur hierheen of klik om te kiezen</div><div class="mut" style="font-size:14px;margin-top:4px">De gegevens worden automatisch voorinvuld.</div>'; fileInput.value = ''; }
     }
@@ -380,7 +385,7 @@
       const b = state.accounts.filter((a) => a.type === 'actief' && !a.systeem);
       return (b.find((a) => a.isBank) || b.find((a) => /bunq|bank/i.test(a.naam)) || b[0] || {}).nummer || '';
     }
-    function boekVanBank(line) {
+    async function boekVanBank(line) {
       const regime = line.btw_regime || '21';
       const incl = Number(line.bedrag);
       const initial = { datum: line.datum, omschrijving: line.leverancier_naam || line.tegenrekening_naam || line.omschrijving || '', grootboekrekening: line.standaard_rekening || '' };
@@ -388,7 +393,25 @@
       else if (regime === 'verlegd') { initial.btwPercentage = 'verlegd'; initial.bedragExBTW = round2(incl); }
       else { const p = Number(regime) || 0; initial.btwPercentage = String(regime); initial.bedragExBTW = p > 0 ? round2(incl / (1 + p / 100)) : round2(incl); }
       const type = line.afbij === 'af' ? 'inkoop' : 'verkoop';
-      openBoeking(initial, type, { betaal: bankRekening(), onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Betaling afgeletterd ✓'); laad(); } });
+      // Kostenrekening voorstellen: de leverancier wint, anders kijken we hoe je
+      // deze tegenpartij de vorige keren boekte.
+      let gbVast = false;
+      if (line.standaard_rekening) {
+        gbVast = true;
+        initial.voorstelTip = 'standaard kostenrekening van leverancier ' + (line.leverancier_naam || '');
+      } else {
+        try {
+          const v = await api('boeking_voorstel', {
+            leverancier: line.leverancier_naam || line.tegenrekening_naam || '',
+            omschrijving: line.omschrijving || '',
+            iban: line.tegenrekening_iban || '',
+            type,
+          });
+          if (v && v.grootboekrekening) { initial.grootboekrekening = v.grootboekrekening; initial.voorstelTip = v.toelichting; }
+        } catch { /* voorstel is een extraatje — bij een fout gewoon leeg laten */ }
+      }
+      // De bankrekening staat vast: deze boeking hoort bij díé bankregel.
+      openBoeking(initial, type, { betaal: bankRekening(), betaalVast: true, gbVast, onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Betaling afgeletterd ✓'); laad(); } });
     }
     // Overboeking / memoriaal: bankregel boeken tegen een vrije tegenrekening
     // (bv. rekening-courant privé, BTW-betaling, overboeking tussen banken).
@@ -1677,6 +1700,18 @@
   }
 
   // ---------------- Modal: Boeking ----------------
+  /* Omschrijving uit een uitgelezen factuur: leverancier vóóraan zetten.
+     Niet alleen leesbaarder in het journaal — de app herkent de volgende factuur
+     van dezelfde leverancier door in eerdere omschrijvingen te zoeken, en de AI
+     zet die naam er lang niet altijd zelf in ("Maandelijkse bankkosten"). */
+  function factuurOms(d) {
+    const lev = String(d.leverancier || '').trim();
+    const oms = String(d.omschrijving || '').trim();
+    if (!lev) return oms;
+    if (!oms) return lev;
+    return oms.toLowerCase().includes(lev.toLowerCase()) ? oms : lev + ' — ' + oms;
+  }
+
   function openBoeking(initial, initialType, opts) {
     opts = opts || {};
     const accounts = state.accounts;
@@ -1694,6 +1729,8 @@
       pct: (initial && initial.btwRegime === 'geen') ? 'geen' : (initial && initial.btwPercentage != null ? String(initial.btwPercentage) : '21'),
       grootboek: (initial && initial.grootboekrekening) || (kosten[0] ? kosten[0].nummer : ''),
       betaal: (opts.betaal) || (banken.find((a) => a.isBank) || banken.find((a) => /bank|bunq/i.test(a.naam)) || banken[0] || {}).nummer || '',
+      // Waarom de kostenrekening is voorgevuld — leeg = gewoon de eerste uit de lijst.
+      tip: (initial && initial.voorstelTip) || '',
     };
 
     const ov = document.createElement('div');
@@ -1748,6 +1785,7 @@
             <label class="field"><span>${st.type === 'inkoop' ? 'Kostenrekening' : 'Omzetrekening'}</span><select id="gb">${opties(gbList, st.grootboek)}</select></label>
             <label class="field"><span>Betaald via</span><select id="bet">${opties(banken, st.betaal)}</select></label>
           </div>
+          ${st.tip ? `<div class="mut" style="font-size:12px;line-height:1.45;color:var(--warning)">↳ voorgesteld: ${esc(st.tip)}. Controleer het even en pas het aan als het niet klopt.</div>` : ''}
           <div class="mut" style="font-size:12px;line-height:1.45">BTW-regime: <b style="color:var(--inkdim)">21/9/0%</b> = Nederland · <b style="color:var(--inkdim)">geen (buitenland)</b> = niet-EU (bv. Anthropic, VS) · <b style="color:var(--inkdim)">verlegd (EU)</b> = EU-diensten (bv. Google/Microsoft, Ierland). Weet je het niet zeker? Kies 21% of vraag je boekhouder.</div>
           <div class="preview"><div class="h">Journaalpost-preview (zo wordt het geboekt)</div>
             <table><thead><tr><th style="padding:4px 16px">Rekening</th><th class="r" style="padding:4px 16px">Debet</th><th class="r" style="padding:4px 16px">Credit</th></tr></thead>
@@ -1769,12 +1807,18 @@
         const btn = ov.querySelector('#pdf'); btn.textContent = 'Uitlezen…'; btn.disabled = true;
         try {
           const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(file); });
-          const d = await api('factuur_lezen', { pdf: b64 }, 'POST');
-          if (d.omschrijving || d.leverancier) st.omschrijving = d.omschrijving || d.leverancier;
+          const d = await api('factuur_lezen', { pdf: b64, type: st.type }, 'POST');
+          if (d.omschrijving || d.leverancier) st.omschrijving = factuurOms(d);
           if (d.factuurNummer) st.factuurNummer = d.factuurNummer;
           if (d.factuurDatum) st.datum = d.factuurDatum;
           if (d.bedragExBTW) st.bedrag = String(d.bedragExBTW);
           if (d.btwPercentage != null && st.pct !== 'geen') st.pct = String(d.btwPercentage);
+          // Kosten-/omzetrekening en betaalrekening voorstellen op basis van de leverancier
+          // op de factuur. Een keuze die al vaststaat (leverancier-instelling, of de bank
+          // waar de bankregel vandaan komt) laten we met rust.
+          const v = d.voorstel || {};
+          if (v.grootboekrekening && !opts.gbVast) { st.grootboek = v.grootboekrekening; st.tip = v.toelichting || ''; }
+          if (v.betaalrekening && !opts.betaalVast) st.betaal = v.betaalrekening;
           toast('Factuur uitgelezen ✓'); render();
         } catch (e) { toast(e.message, 'error'); btn.textContent = '📄 Factuur'; btn.disabled = false; }
       };
@@ -2074,6 +2118,7 @@
     buitenland: { q: 'Hoe boek ik een buitenlandse leverancier (Anthropic, Hosting.com) zonder NL-BTW?', a: 'Leg de leverancier vast (Bank-pagina → Leveranciers) met het juiste <b>BTW-regime</b>: <b>geen</b> voor niet-EU (bv. VS — geen BTW, telt niet mee in de aangifte) of <b>verlegd</b> voor EU-diensten (de BTW wordt naar jou verlegd). Bij "verlegd" boekt de app de BTW zowel als verschuldigd (<code>1910</code>) als voorbelasting (<code>1810</code>) — saldo € 0 — en zet het in rubriek 4b. Kies bij de boeking hetzelfde bij "BTW".' },
     verkoop: { q: 'Hoe boek ik een verkoopfactuur?', a: 'Ga naar <b>Facturen invoeren → Verkoop</b>, vul het bedrag excl. BTW en het tarief (21% of 9%) in. De app boekt de omzet als opbrengst en de verschuldigde BTW op <code>1910</code>.' },
     prive: { q: 'Hoe boek ik geld dat ik vanuit GIBS naar privé haal (lenen van de BV)?', a: 'Dit is <b>geen kost</b> maar een verschuiving naar je <b>rekening-courant</b> met de BV. Op de <b>Bank</b>-pagina bij die afschrijving → <b>overboeking</b> → kies als tegenrekening je rekening-courant (bijv. <code>1310 Rekening-courant DGA</code>). Boeking: <code>DR 1310 / CR bank</code>. Je schuld aan de BV neemt toe. Stort je geld terug, dan draai je het om.' },
+    voorstelRekening: { q: 'De kostenrekening staat al ingevuld — waar komt dat voorstel vandaan?', a: 'De app vult <b>kostenrekening</b> en <b>betaald via</b> alvast in op twee manieren. <b>(1) De leverancier:</b> heb je die vastgelegd (Bank-pagina → Leveranciers) met een <b>standaard kostenrekening</b>, dan wint die altijd. <b>(2) Je eigen historie:</b> zo niet, dan kijkt de app hoe je diezelfde leverancier de vorige keren boekte en stelt dezelfde rekening voor. Je hoeft dus niets in te stellen — boek de bunq-factuur één keer op Bankkosten en volgende maand staat het er vanzelf. Onder de keuzelijsten zie je <b>waarom</b> iets is voorgesteld. Het blijft een voorstel: controleer het en pas het aan vóór je op <b>Boeken</b> klikt.' },
     knoppen: { q: 'Wat is het verschil tussen Boek, Koppel, Overboeking en Negeer?', a: '<b>Boek</b> = een nieuwe boeking maken (factuur, upload de PDF). <b>Overboeking</b> = geen factuur maar een verschuiving (privé, BTW-betaling, geld tussen banken). <b>Koppel</b> = verbinden aan een boeking die je al had — verschijnt alléén als er een boeking met hetzelfde bedrag bestaat. <b>Negeer</b> = niet relevant.' },
     tussenbanken: { q: 'Hoe boek ik geld tussen twee eigen bankrekeningen?', a: 'Op de <b>Bank</b>-pagina → <b>overboeking</b> → kies als tegenrekening de andere bankrekening. Er verandert niets aan je vermogen, alleen het saldo verschuift. (Zo boek je bijvoorbeeld een overboeking van je oude ING naar bunq.)' },
     btwwerking: { q: 'Hoe werkt de BTW in deze app?', a: 'Je verkopen leveren <b>verschuldigde BTW</b> op (<code>1910</code>), je inkopen leveren <b>voorbelasting</b> op (<code>1810</code>). Per kwartaal is het saldo (1910 − 1810) je aangifte: positief = betalen, negatief = terugkrijgen.' },
@@ -2102,8 +2147,8 @@
   };
   const FAQ_PAGES = {
     dashboard: ['debet', 'inkoop', 'prive', 'btwafdracht', 'rcrente'],
-    facturen: ['inkoop', 'buitenland', 'verkoop', 'knoppen'],
-    bank: ['prive', 'knoppen', 'btwafdracht', 'tussenbanken'],
+    facturen: ['inkoop', 'voorstelRekening', 'buitenland', 'verkoop', 'knoppen'],
+    bank: ['knoppen', 'voorstelRekening', 'prive', 'btwafdracht', 'tussenbanken'],
     btw: ['btwwerking', 'btwafdracht', 'verlegd', 'buitenland'],
     journaal: ['memoriaal', 'afschrijving', 'rcrente', 'prive'],
     grootboek: ['grootboekkaart', 'afschrijving', 'rcrente'],
