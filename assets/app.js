@@ -613,7 +613,9 @@
             ${d.rubriek4b ? rij('4b — Verworven diensten uit EU (verlegd)', d.rubriek4b.grondslag, d.rubriek4b.btw) : ''}
             <tr style="background:rgba(38,52,73,.4)"><td style="font-weight:500;color:var(--inkdim)">Verschuldigde BTW</td><td></td><td class="num" style="font-weight:500;color:var(--ink)">${euro(d.verschuldigd)}</td></tr>
             ${rij('5b — Voorbelasting', null, d.rubriek5b)}
+            <tr style="background:rgba(38,52,73,.4)"><td style="font-weight:600;color:var(--inkdim)">Saldo (verschuldigd − voorbelasting)</td><td></td><td class="num ${round2(d.saldo) >= 0 ? 'dan' : 'suc'}" style="font-weight:700">${euro(Math.abs(round2(d.saldo)))} ${round2(d.saldo) >= 0 ? 'te betalen' : 'te ontvangen'}</td></tr>
           </tbody></table>
+          <div class="mut" style="font-size:12px;padding:0 20px 16px;line-height:1.5">Verlegde BTW (4b) staat hier <b>twee keer</b>: als verschuldigd én als voorbelasting in 5b. Die heffen elkaar op, dus het saldo is lager dan 5b. Dat hoort zo.</div>
         </div>
         <div>
           <div class="card p5">
