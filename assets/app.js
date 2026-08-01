@@ -1121,15 +1121,72 @@
     await renderInhoud();
   }
 
+  /* Rekeningkaart: alle boekingen van één privérekening, met een doorlopend saldo.
+     Het saldo rekenen we van nieuw naar oud terug vanaf het huidige saldo van de
+     rekening. Dat blijft ook kloppen als de lijst wordt afgekapt, terwijl optellen
+     vanaf het beginsaldo dan zou gaan schuiven. */
+  async function openPriveRekeningKaart(rekening, onChange) {
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    const soort = PRIVE_REK_SOORT[rekening.soort] || rekening.soort;
+    ov.innerHTML = `<div class="modal lg"><div class="modal-head"><h2>${esc(rekening.naam)} — boekingen <span class="badge">${esc(soort)}</span></h2><button class="x">✕</button></div>
+      <div class="modal-body" id="rk"><div class="mut">Laden…</div></div></div>`;
+    ov.querySelector('.x').onclick = close;
+    const rk = ov.querySelector('#rk');
+    let alleRek = [], cats = [];
+    try { [alleRek, cats] = await Promise.all([api('prive_rekeningen'), api('prive_categorieen')]); } catch (e) { /* bewerken lukt dan niet, tonen wel */ }
+
+    async function renderInhoud() {
+      let tx = [], total = 0;
+      try { const r = await api('prive_transacties', { rekening: rekening.id }); tx = r.items; total = r.total; }
+      catch (e) { rk.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+      // Nieuwste eerst: de bovenste regel eindigt op het huidige saldo.
+      let loop = rekening.saldo;
+      const metSaldo = tx.map((t) => { const na = loop; loop = round2(loop - t.bedrag); return { t, na }; });
+      const gedeeld = rekening.aandeel < 100;
+      const rows = metSaldo.length ? metSaldo.map(({ t, na }) => `<tr>
+          <td class="num" style="text-align:left">${datumNL(t.datum)}</td>
+          <td data-tip="${esc(t.tegenrekening_naam || '')}" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.tegenrekening_naam || '—')}</td>
+          <td data-tip="${esc(t.omschrijving || '')}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
+          <td class="mut">${t.categorie_naam ? esc(t.categorie_naam) : (t.koppel_id ? '<span title="Overboeking naar een eigen rekening">⇄ overboeking</span>' : '<span class="warn">nog te doen</span>')}</td>
+          <td class="num ${t.bedrag >= 0 ? 'suc' : 'dan'}">${euro(t.bedrag)}</td>
+          <td class="num" style="color:var(--ink)">${euro(na)}</td>
+          <td class="r"><button class="linkbtn" data-edit-tx="${t.id}" title="Bewerk deze boeking">✎</button></td></tr>`).join('')
+        : '<tr><td colspan="7" class="empty">Nog geen boekingen op deze rekening. Importeer een afschrift met de knop <b>importeer</b>.</td></tr>';
+      const afgekapt = total > tx.length;
+      rk.innerHTML = `
+        <div class="grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+          ${stat('Beginsaldo', euro(rekening.beginsaldo))}
+          ${stat('Mutaties', euro(round2(rekening.saldo - rekening.beginsaldo)))}
+          ${stat('Saldo nu', euro(rekening.saldo), rekening.saldo >= 0 ? 'suc' : 'dan')}
+        </div>
+        <div style="overflow-x:auto;min-width:0"><table class="compact">
+          <thead><tr><th>Datum</th><th>Tegenpartij</th><th>Omschrijving</th><th>Categorie</th><th class="r">Bedrag</th><th class="r">Saldo</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+        <div class="mut" style="font-size:12px;margin-top:10px;line-height:1.55">${total} boeking${total === 1 ? '' : 'en'}${afgekapt ? ` — de nieuwste ${tx.length} worden getoond` : ''}. De kolom <b>Saldo</b> is het saldo ná die boeking; bovenaan staat dus het huidige saldo van de rekening. Klopt dat met je bankapp, dan is de import compleet.${gedeeld ? ` Dit is een gedeelde rekening (<b>${rekening.aandeel}%</b>): in je vermogen en uitgaven telt alleen jouw deel mee, hier staan de volledige bedragen.` : ''}</div>`;
+      rk.querySelectorAll('[data-edit-tx]').forEach((b) => b.onclick = () => {
+        const t = tx.find((x) => x.id === Number(b.dataset.editTx));
+        if (t) openPriveTransactie(t, alleRek, cats, async () => {
+          // Saldo kan veranderd zijn — opnieuw ophalen zodat de kaart blijft kloppen.
+          try { const vers = (await api('prive_rekeningen')).find((x) => x.id === rekening.id); if (vers) rekening = vers; } catch (e) { /* laat staan */ }
+          renderInhoud(); if (onChange) onChange();
+        });
+      });
+    }
+    await renderInhoud();
+  }
+
   async function privRekeningen(view) {
     const laad = () => privRekeningen(view);
     let rek;
     try { rek = await api('prive_rekeningen'); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
     view.innerHTML = pageHead('Rekeningen', 'Je privérekeningen, saldo en bankimport.', `<button class="btn btn-ghost" id="txWissen">Transacties wissen…</button><button class="btn btn-danger" id="priveReset">Schone lei…</button><button class="btn btn-brand" id="nieuwRek">+ Rekening</button>`) +
-      `<div class="help" style="margin-bottom:16px">Maak per rekening een regel aan (met <b>beginsaldo</b>) en klik <b>importeer</b> voor je afschrift — <b>ING CSV</b> (<code>.csv</code>) of <b>MT940</b> (<code>.sta</code>, o.a. bunq) worden automatisch herkend. Er worden <b>alleen nieuwe betalingen</b> toegevoegd; dubbele (bij een zelfde of overlappend bestand) worden automatisch genegeerd. Ook bezittingen (auto, beleggingen) kun je als rekening toevoegen. Bij een <b>gedeelde rekening</b> zet je je <b>aandeel</b> (bv. 50%) — dan telt alleen jouw deel mee in je vermogen en uitgaven.</div>
+      `<div class="help" style="margin-bottom:16px">Maak per rekening een regel aan (met <b>beginsaldo</b>) en klik <b>importeer</b> voor je afschrift — <b>ING CSV</b> (<code>.csv</code>) of <b>MT940</b> (<code>.sta</code>, o.a. bunq) worden automatisch herkend. Er worden <b>alleen nieuwe betalingen</b> toegevoegd; dubbele (bij een zelfde of overlappend bestand) worden automatisch genegeerd. Ook bezittingen (auto, beleggingen) kun je als rekening toevoegen. Bij een <b>gedeelde rekening</b> zet je je <b>aandeel</b> (bv. 50%) — dan telt alleen jouw deel mee in je vermogen en uitgaven. Klik op de <b>naam</b> of het <b>saldo</b> van een rekening (of op <b>boekingen</b>) om alle boekingen met een doorlopend saldo te zien.</div>
         <div class="card"><table class="compact"><thead><tr><th>Naam</th><th>Soort</th><th>IBAN</th><th class="r">Aandeel</th><th class="r">Saldo</th><th></th></tr></thead><tbody>
-        ${rek.length ? rek.map((r) => `<tr><td style="color:var(--ink)">${esc(r.naam)}</td><td>${PRIVE_REK_SOORT[r.soort] || r.soort}</td><td class="mut">${esc(r.iban || '')}</td><td class="num">${r.aandeel}%</td><td class="num" style="color:var(--ink)">${euro(r.saldo)}${r.aandeel < 100 ? `<div class="mut" style="font-size:11px">jouw deel ${euro(r.aandeelSaldo)}</div>` : ''}</td>
-          <td class="r" style="white-space:nowrap">${(r.soort === 'bank' || r.soort === 'spaar') ? `<button class="btn btn-success" data-imp="${r.id}" style="padding:4px 10px">importeer</button> ` : ''}<button class="linkbtn" data-edit="${r.id}">bewerken</button> <button class="linkbtn del" data-del="${r.id}">✕</button></td></tr>`).join('') : '<tr><td colspan="6" class="empty">Nog geen rekeningen.</td></tr>'}
+        ${rek.length ? rek.map((r) => `<tr><td class="klik" data-kaart="${r.id}" style="color:var(--ink)" title="Bekijk alle boekingen van deze rekening">${esc(r.naam)}</td><td>${PRIVE_REK_SOORT[r.soort] || r.soort}</td><td class="mut">${esc(r.iban || '')}</td><td class="num">${r.aandeel}%</td><td class="num klik" data-kaart="${r.id}" style="color:var(--ink)" title="Bekijk alle boekingen van deze rekening">${euro(r.saldo)}${r.aandeel < 100 ? `<div class="mut" style="font-size:11px">jouw deel ${euro(r.aandeelSaldo)}</div>` : ''}</td>
+          <td class="r" style="white-space:nowrap"><button class="linkbtn" data-kaart="${r.id}">boekingen</button> ${(r.soort === 'bank' || r.soort === 'spaar') ? `<button class="btn btn-success" data-imp="${r.id}" style="padding:4px 10px">importeer</button> ` : ''}<button class="linkbtn" data-edit="${r.id}">bewerken</button> <button class="linkbtn del" data-del="${r.id}">✕</button></td></tr>`).join('') : '<tr><td colspan="6" class="empty">Nog geen rekeningen.</td></tr>'}
         </tbody></table></div>
         <input type="file" id="mtfile" accept=".sta,.csv,.txt,text/plain" style="display:none" />`;
     document.getElementById('nieuwRek').onclick = () => openPriveRekening(null, laad);
@@ -1141,6 +1198,7 @@
       if (!confirm('Schone lei: dit verwijdert AL je privérekeningen, transacties, posten en herken-regels (je categorieën blijven). Daarna kun je opnieuw importeren vanaf 1 januari.\n\nDoorgaan?')) return;
       try { await api('prive_reset', { bevestig: 'PRIVE' }, 'POST'); toast('Privéboekhouding gewist — schone lei ✓'); laad(); } catch (e) { toast(e.message, 'error'); }
     };
+    view.querySelectorAll('[data-kaart]').forEach((b) => b.onclick = () => openPriveRekeningKaart(rek.find((x) => x.id === Number(b.dataset.kaart)), laad));
     view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveRekening(rek.find((x) => x.id === Number(b.dataset.edit)), laad));
     view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Rekening én alle bijbehorende transacties verwijderen?')) return; try { await api('prive_rekening_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Verwijderd'); laad(); } catch (e) { toast(e.message, 'error'); } });
     const mtfile = document.getElementById('mtfile'); let impRek = 0;
