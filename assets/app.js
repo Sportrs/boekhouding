@@ -618,9 +618,10 @@
           <div class="card p5">
             <div style="font-size:14px;font-weight:500;color:var(--inkdim)">Saldo aangifte${basis.uitGrootboek ? ' <span class="badge" style="color:var(--warning)">volgens grootboek</span>' : ''}</div>
             <div class="num ${teBetalen ? 'dan' : 'suc'}" style="font-size:30px;font-weight:700;margin-top:8px;text-align:left">${euro(Math.abs(basis.saldo))}</div>
-            <div class="mut" style="font-size:14px;margin-top:4px">${teBetalen ? 'Te betalen aan de Belastingdienst' : 'Te ontvangen van de Belastingdienst'}</div>
-            ${basis.uitGrootboek ? `<div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5;color:var(--warning)">De rubriekentabel hiernaast komt op <b>${euro(Math.abs(basis.rubriek))}</b>, maar die telt alleen boekingen die je <b>in deze app</b> hebt gemaakt — boekingen uit een XAF-import dragen geen BTW-kenmerken. Dit bedrag komt uit de werkelijke mutaties op je BTW-rekeningen (blok onderaan) en is het volledige beeld. Vergelijk het met de aangifte die je hebt ingediend voor je iets boekt.</div>` : ''}
-            <button class="btn btn-brand" id="afdracht" style="margin-top:14px;width:100%">${teBetalen ? 'Afdracht boeken' : 'Teruggaaf boeken'}</button>
+            <div class="mut" style="font-size:14px;margin-top:4px">${basis.afgerekend ? 'Dit kwartaal is al afgerekend' : teBetalen ? 'Te betalen aan de Belastingdienst' : 'Te ontvangen van de Belastingdienst'}</div>
+            ${basis.afgerekend ? `<div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5;color:var(--success)">Al je BTW-rekeningen staan voor dit kwartaal op 0 — er is dus al een afrekening geboekt. De rubriekentabel hiernaast toont nog ${euro(Math.abs(basis.rubriek))}, maar dat zijn losse boekingskenmerken en geen openstaand saldo. Boek hier niets meer, anders reken je dubbel af.</div>`
+              : basis.uitGrootboek ? `<div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5;color:var(--warning)">De rubriekentabel hiernaast komt op <b>${euro(Math.abs(basis.rubriek))}</b>, maar die telt alleen boekingen die je <b>in deze app</b> hebt gemaakt — boekingen uit een XAF-import dragen geen BTW-kenmerken. Dit bedrag komt uit de werkelijke mutaties op je BTW-rekeningen (blok onderaan) en is het volledige beeld. Vergelijk het met de aangifte die je hebt ingediend voor je iets boekt.</div>` : ''}
+            <button class="btn ${basis.afgerekend ? 'btn-ghost' : 'btn-brand'}" id="afdracht" style="margin-top:14px;width:100%">${basis.afgerekend ? 'Opnieuw afrekenen…' : teBetalen ? 'Afdracht boeken' : 'Teruggaaf boeken'}</button>
             <div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5">${basis.uitGrootboek ? 'Boekt elke BTW-rekening uit het blok onderaan naar 0 tegen de bank.' : `Boekt de verschuldigde BTW (${esc(btwVerschRek())}) en voorbelasting (${esc(btwVoorRek())}) weg tegen de bank, zodat beide naar 0 lopen.`} Doe dit als je betaalt/de teruggaaf ontvangt.</div>
           </div>
           <div class="card" style="margin-top:24px">
@@ -2088,8 +2089,9 @@
     const rVersch = btwVerschRek(), rVoor = btwVoorRek();
 
     // Zelfde afweging als de kop op de pagina, zodat knop en kop nooit uiteenlopen.
-    const { gbRek, gbSaldo, rubriekLeeg, uitGrootboek, saldo: eindSaldo } = btwSaldoBasis(d);
+    const { gbRek, gbSaldo, rubriekLeeg, uitGrootboek, afgerekend, saldo: eindSaldo } = btwSaldoBasis(d);
     if (!uitGrootboek && rubriekLeeg) return toast('Geen BTW in dit kwartaal om af te rekenen', 'error');
+    if (afgerekend) return toast(`Q${kwartaal} ${jaar} is al afgerekend — alle BTW-rekeningen staan op 0`, 'error');
     const regels = [];
     if (uitGrootboek) {
       // Elke BTW-rekening terugboeken naar 0: stond hij credit, dan nu debet en andersom.
@@ -2245,8 +2247,14 @@
     const gbRek = (gb.rekeningen || []).filter((r) => r.soort !== 'verrekening' && Math.abs(r.bijdrage) >= 0.005);
     const gbSaldo = round2(gb.teBetalen || 0);
     const rubriekLeeg = Math.abs(round2(d.verschuldigd || 0)) < 0.005 && Math.abs(round2(d.rubriek5b || 0)) < 0.005;
-    const uitGrootboek = gbRek.length > 0 && (rubriekLeeg || Math.abs(gbSaldo - rubriek) >= 0.005);
-    return { rubriek, gbSaldo, gbRek, rubriekLeeg, uitGrootboek, saldo: uitGrootboek ? gbSaldo : rubriek };
+    // Let op: kijk naar álle BTW-rekeningen met mutaties, niet alleen die met een
+    // saldo. Na een afrekening staan ze allemaal op 0 — dat betekent "afgerekend",
+    // niet "geen gegevens". Zonder dit onderscheid viel de kop na het boeken weer
+    // terug op het rubriekenbedrag en leek er ineens weer iets open te staan.
+    const heeftMutaties = (gb.rekeningen || []).some((r) => r.soort !== 'verrekening');
+    const uitGrootboek = heeftMutaties && (rubriekLeeg || Math.abs(gbSaldo - rubriek) >= 0.005);
+    const afgerekend = uitGrootboek && gbRek.length === 0 && Math.abs(gbSaldo) < 0.005;
+    return { rubriek, gbSaldo, gbRek, rubriekLeeg, uitGrootboek, afgerekend, saldo: uitGrootboek ? gbSaldo : rubriek };
   }
 
   function btwRekeningWaarschuwing() {
