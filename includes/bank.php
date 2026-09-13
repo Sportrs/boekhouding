@@ -250,6 +250,33 @@ function bank_lijst(?string $status = null): array {
     return $rows;
 }
 
+/* Zelf geboekte facturen die geld van een bankrekening af halen of erop zetten,
+   maar aan geen enkele bankregel gekoppeld zijn. Volgens het grootboek is er dan
+   iets over de bank gegaan waar geen afschriftregel bij hoort: een dubbele
+   boeking, of een boeking die bij een nog open bankregel hoort.
+
+   btw_grondslag vult alleen de factuurboeking; memoriaalposten en alles uit een
+   XAF- of jaarrekening-import laten die leeg. Die horen hier niet thuis: de
+   boekhouding van de accountant loopt over een periode waarvoor je vaak geen
+   afschrift hebt ingelezen, en zou de lijst onbruikbaar maken. */
+function bank_losse_boekingen(): array {
+    $bankLeg = bank_leg_sql('t.id');
+    $q = db()->query(
+        "SELECT x.id, x.datum, x.omschrijving, x.factuur_nummer, x.bankbedrag FROM (
+            SELECT t.id, t.datum, t.omschrijving, t.factuur_nummer, $bankLeg AS bankbedrag
+            FROM transacties t
+            WHERE t.btw_grondslag IS NOT NULL
+              AND t.id NOT IN (SELECT transactie_id FROM banktransacties WHERE transactie_id IS NOT NULL)
+         ) x
+         WHERE ABS(x.bankbedrag) >= 0.005
+         ORDER BY x.datum DESC, x.id DESC
+         LIMIT 200"
+    );
+    $rows = $q->fetchAll();
+    foreach ($rows as &$r) { $r['id'] = (int) $r['id']; $r['bankbedrag'] = (float) $r['bankbedrag']; }
+    return $rows;
+}
+
 /* Kandidaat-boekingen met hetzelfde (incl.) bedrag die nog niet gekoppeld zijn. */
 function bank_suggesties(int $id): array {
     $b = db()->prepare("SELECT bedrag, datum, afbij FROM banktransacties WHERE id = :id");

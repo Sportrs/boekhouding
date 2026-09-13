@@ -455,10 +455,10 @@
       openMemoriaal(laad, { hint, initial: { datum: line.datum, omschrijving: oms, regels }, onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Afgeletterd ✓'); laad(); } });
     }
     async function laad() {
-      let lijst, leveranciers;
+      let lijst, leveranciers, losse;
       try {
         await loadAccounts();
-        [lijst, leveranciers] = await Promise.all([api('bank_lijst', filter === 'alle' ? {} : { status: filter }), api('leveranciers')]);
+        [lijst, leveranciers, losse] = await Promise.all([api('bank_lijst', filter === 'alle' ? {} : { status: filter }), api('leveranciers'), api('bank_losse_boekingen')]);
       } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
 
       const tabs = ['open', 'gekoppeld', 'genegeerd', 'alle'];
@@ -486,6 +486,19 @@
           <td class="r" style="white-space:nowrap">${acties}</td></tr>${scheefRij}`;
       }).join('') : `<tr><td colspan="7" class="empty">Geen bankregels — importeer een MT940 (.sta) bestand.</td></tr>`;
 
+      // Boekingen die wél over de bank lopen maar bij geen enkele bankregel horen.
+      // Daar zit de fout geboekte factuur tussen nadat je de bankregel hebt ontkoppeld:
+      // die is in het Journaal niet te vinden op de datum van de bankregel, want een
+      // boeking draagt de factuurdatum.
+      const losseRows = losse.length ? losse.map((t) => `<tr>
+        <td class="num" style="text-align:left">${datumNL(t.datum)}</td>
+        <td class="${t.bankbedrag >= 0 ? 'dan' : 'suc'}">${t.bankbedrag >= 0 ? 'af' : 'bij'}</td>
+        <td class="num" style="color:var(--ink)">${euro(Math.abs(t.bankbedrag))}</td>
+        <td data-tip="${esc(t.omschrijving || '')}" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(t.omschrijving || '')}</td>
+        <td class="mut">${esc(t.factuur_nummer || '')}</td>
+        <td class="r"><button class="linkbtn del" data-losdel="${t.id}" title="Boeking verwijderen">\u{1F5D1}</button></td></tr>`).join('')
+        : `<tr><td colspan="6" class="empty">\u2713 Elke zelf geboekte factuur hoort bij een bankregel.</td></tr>`;
+
       const levRows = leveranciers.length ? leveranciers.map((l) => `<tr>
         <td>${esc(l.naam)}</td><td class="mut">${esc(l.zoekterm || '')}</td><td class="mut">${esc(l.land || '')}</td>
         <td>${l.btw_regime === 'geen' ? '<span class="badge">geen BTW</span>' : l.btw_regime + '%'}</td>
@@ -501,6 +514,10 @@
          <div class="card" style="margin-bottom:24px;overflow:hidden"><div style="overflow-x:auto"><table class="compact">
            <thead><tr><th>Datum</th><th>Af/bij</th><th class="r" style="width:88px">Bedrag</th><th>Tegenrekening</th><th>Omschrijving</th><th>Status</th><th></th></tr></thead>
            <tbody>${rows}</tbody></table></div></div>
+         <div class="card" style="margin-bottom:24px"><div class="card-head"><span>Facturen zonder bankregel${losse.length ? ' (' + losse.length + ')' : ''}</span></div>
+           <div class="mut" style="padding:12px 20px 0;font-size:12px;line-height:1.5">Dit zijn facturen die je zelf hebt geboekt terwijl er geen bankregel bij hoort, al ging er volgens het grootboek wel geld van je rekening af. Dat is een <b style="color:var(--inkdim)">dubbele boeking</b>, of een boeking die bij een nog <b style="color:var(--inkdim)">open</b> bankregel hoort. Let op het bedrag: staat hier een boeking van \u20AC 7,45 terwijl de open bankregel \u20AC 9,02 is, dan is dat de factuur die ooit met het verkeerde BTW-regime is gesplitst \u2014 verwijder hem hier en boek de bankregel opnieuw met <b style="color:var(--inkdim)">Boek</b>. Memoriaalposten (overboekingen, afschrijvingen) en alles uit een XAF- of jaarrekening-import blijven hier buiten.</div>
+           <table><thead><tr><th>Datum</th><th>Af/bij</th><th class="r" style="width:88px">Bedrag</th><th>Omschrijving</th><th>Factuurnr.</th><th></th></tr></thead>
+           <tbody>${losseRows}</tbody></table></div>
          <div class="card"><div class="card-head"><span>Leveranciers</span><button class="btn btn-brand" id="nieuweLev">+ Leverancier</button></div>
            <div class="mut" style="padding:12px 20px 0;font-size:12px;line-height:1.5">Leg vaste leveranciers vast met een <b style="color:var(--inkdim)">zoekterm</b> (bv. ANTHROPIC), hun land, het BTW-regime en een standaard kostenrekening. Een betaling in je bankafschrift wordt dan automatisch als die leverancier herkend, zodat "Boek" meteen de juiste kostenrekening en BTW invult — minder klikken, minder fouten.</div>
            <table><thead><tr><th>Naam</th><th>Zoekterm</th><th>Land</th><th>BTW</th><th>Kostenrek.</th><th></th></tr></thead>
@@ -520,6 +537,11 @@
       view.querySelectorAll('[data-negeer]').forEach((b) => b.onclick = async () => { await api('bank_status', { id: Number(b.dataset.negeer), status: 'genegeerd' }, 'POST'); laad(); });
       view.querySelectorAll('[data-open]').forEach((b) => b.onclick = async () => { await api('bank_status', { id: Number(b.dataset.open), status: 'open' }, 'POST'); laad(); });
       view.querySelectorAll('[data-ontkoppel]').forEach((b) => b.onclick = async () => { await api('bank_ontkoppel', { id: Number(b.dataset.ontkoppel) }, 'POST'); laad(); });
+      view.querySelectorAll('[data-losdel]').forEach((b) => b.onclick = async () => {
+        if (!confirm('Deze boeking verwijderen? De bankregel komt dan (weer) als open in het overzicht te staan.')) return;
+        try { await api('transactie_verwijder', { id: Number(b.dataset.losdel) }, 'POST'); toast('Boeking verwijderd'); laad(); }
+        catch (e) { toast(e.message, 'error'); }
+      });
       document.getElementById('nieuweLev').onclick = () => openLeverancier(null, laad);
       view.querySelectorAll('[data-lev-edit]').forEach((b) => b.onclick = () => openLeverancier(leveranciers.find((l) => l.id === Number(b.dataset.levEdit)), laad));
       view.querySelectorAll('[data-lev-del]').forEach((b) => b.onclick = async () => { if (!confirm('Leverancier verwijderen?')) return; await api('leverancier_verwijder', { id: Number(b.dataset.levDel) }, 'POST'); laad(); });
