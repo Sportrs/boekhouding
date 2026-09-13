@@ -1848,6 +1848,22 @@
     return round2(bruto - round2((bruto * p) / (100 + p)));
   }
 
+  /* Beginkeuze voor de kosten-/omzetrekening. Gewoon de eerste uit de lijst is een
+     slechte gok: opbrengsten beginnen op nummer bij "4801 Rentebaten", en dan belandt
+     een creditfactuur of terugbetaling stilletjes op de rentebaten. Omzet staat in de
+     8-reeks, kosten in de 4-reeks; financiële baten/lasten slaan we over. */
+  function standaardGrootboek(list, soort) {
+    if (!list.length) return '';
+    const reeks = soort === 'opbrengsten' ? '8' : '4';
+    const uitzondering = /rente|financ|deelneming|resultaat/i;
+    const naamHit = soort === 'opbrengsten' ? /omzet|opbrengst|verkoop/i : /kosten/i;
+    const a = list.find((x) => String(x.nummer).startsWith(reeks) && !uitzondering.test(x.naam))
+      || list.find((x) => naamHit.test(x.naam))
+      || list.find((x) => !uitzondering.test(x.naam))
+      || list[0];
+    return a.nummer;
+  }
+
   function openBoeking(initial, initialType, opts) {
     opts = opts || {};
     const accounts = state.accounts;
@@ -1863,7 +1879,8 @@
       omschrijving: (initial && (initial.omschrijving || initial.leverancier)) || '',
       bedrag: initial && initial.bedragExBTW != null ? String(initial.bedragExBTW) : '',
       pct: (initial && initial.btwRegime === 'geen') ? 'geen' : (initial && initial.btwPercentage != null ? String(initial.btwPercentage) : '21'),
-      grootboek: (initial && initial.grootboekrekening) || (kosten[0] ? kosten[0].nummer : ''),
+      grootboek: (initial && initial.grootboekrekening)
+        || (initialType === 'verkoop' ? standaardGrootboek(omzet, 'opbrengsten') : standaardGrootboek(kosten, 'kosten')),
       betaal: (opts.betaal) || betaalRek(banken) || (banken.find((a) => a.isBank) || banken.find((a) => /bank|bunq/i.test(a.naam)) || banken[0] || {}).nummer || '',
       // Waarom de kostenrekening is voorgevuld — leeg = gewoon de eerste uit de lijst.
       tip: (initial && initial.voorstelTip) || '',
@@ -1933,7 +1950,7 @@
     }
     function render() {
       const gbList = st.type === 'inkoop' ? kosten : omzet;
-      if (!gbList.find((a) => a.nummer === st.grootboek)) st.grootboek = (gbList[0] || {}).nummer || '';
+      if (!gbList.find((a) => a.nummer === st.grootboek)) st.grootboek = standaardGrootboek(gbList, st.type === 'inkoop' ? 'kosten' : 'opbrengsten');
       const pctOpts = [['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)'], ['verlegd', 'BTW verlegd — EU (4b)'], ['verlegd_niet_eu', 'BTW verlegd — buiten EU (4a)']].map(([v, l]) => `<option value="${v}" ${String(st.pct) === v ? 'selected' : ''}>${l}</option>`).join('');
       ov.innerHTML = `<div class="modal"><div class="modal-head"><h2>Boeking invoeren</h2><button class="x">✕</button></div>
         <div class="modal-body">
