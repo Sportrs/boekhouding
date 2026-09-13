@@ -468,6 +468,23 @@
       const rij_ = (label, bedrag, opt) => `<tr><td style="padding:3px 0;${(opt && opt.in) ? 'padding-left:16px;' : ''}color:var(--${(opt && opt.sterk) ? 'ink' : 'inkdim'})">${label}</td><td class="num" style="padding:3px 0 3px 24px;color:var(--${(opt && opt.sterk) ? 'ink' : 'inkdim'});${(opt && opt.sterk) ? 'font-weight:600' : ''}">${euro(bedrag)}</td></tr>`;
       const nogNietRijen = ['open', 'genegeerd'].filter((k) => st_[k] && st_[k].aantal).map((k) =>
         rij_(`${st_[k].aantal} ${k === 'open' ? 'nog open' : 'genegeerde'} bankregel${st_[k].aantal === 1 ? '' : 's'}`, st_[k].netto, { in: true })).join('');
+      // Het afschrift draagt zijn eigen eindsaldo (MT940 :62F:). Dat tegen het
+      // grootboek op diezelfde datum is de enige controle die geen bankapp nodig
+      // heeft: klopt het, dan kent je administratie elke euro die er is bewogen.
+      const af = aansl.afschrift;
+      const sluitAan = af && Math.abs(af.verschil) < 0.005;
+      const afRijen = !af ? '' :
+        `<tr><td colspan="2" style="padding:12px 0 2px"><span class="mut" style="font-size:12px">laatste afschrift${af.iban ? ' \u00B7 ' + esc(af.iban) : ''} t/m ${datumNL(af.tot)}</span></td></tr>`
+        + rij_('eindsaldo volgens afschrift', af.eindsaldo, { sterk: true })
+        + rij_('grootboek op die datum', af.grootboek, { in: true })
+        + `<tr><td colspan="2" style="padding:4px 0;font-size:12px;line-height:1.4;color:var(--${sluitAan ? 'success' : 'danger'})">${sluitAan
+            ? '\u2713 sluit exact aan'
+            : '\u26A0 verschil ' + euro(Math.abs(af.verschil)) + (af.verschil > 0 ? ' \u2014 het grootboek kent minder geld dan het afschrift' : ' \u2014 het grootboek kent meer geld dan het afschrift')}</td></tr>`;
+      const uitleg = !af
+        ? `Importeer een <b style="color:var(--inkdim)">MT940 (.sta)</b> om dit hard te controleren: zo'n bestand draagt zijn eigen eindsaldo, en dat legt de app dan naast je grootboek. Een ING-CSV bevat geen saldi. Zie je deze regel na een MT940-import nog steeds, draai dan <b style="color:var(--inkdim)">migraties/012_bank_afschriften.sql</b>.`
+        : sluitAan
+          ? `Je grootboek kent elke euro die er t/m ${datumNL(af.tot)} over de rekening ging. Wijkt het saldo in je bankapp daarvan af, dan zit dat verschil volledig in bewegingen <b style="color:var(--inkdim)">ná</b> die datum \u2014 importeer het nieuwste afschrift en boek de nieuwe regels.`
+          : `Er ging geld over de rekening dat je grootboek niet kent, of andersom. In deze volgorde zoeken: staat er nog iets bij <b style="color:var(--inkdim)">open</b> of <b style="color:var(--inkdim)">genegeerd</b> (het geld bewoog wél, alleen boekte je het niet)? Staat er iets in <b style="color:var(--inkdim)">Facturen zonder bankregel</b> hieronder (dan is er dubbel geboekt)? En anders klopt het <b style="color:var(--inkdim)">beginsaldo</b> van je bankrekening niet met de stand vlak vóór ${aansl.periode.van ? datumNL(aansl.periode.van) : 'de eerste ingelezen regel'}.`;
       const aansluiting = `<div class="card" style="margin-bottom:16px"><div class="card-head"><span>Aansluiting banksaldo</span></div>
         <div style="padding:12px 20px 16px;display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start">
           <table style="width:auto"><tbody>
@@ -475,8 +492,9 @@
               + rij_('beginsaldo', r.opening, { in: true }) + rij_('geboekte mutaties', r.mutaties, { in: true })).join('')}
             ${nogNietRijen ? rij_('nog niet geboekt', aansl.nogNiet, { sterk: true }) + nogNietRijen : ''}
             ${rij_('verwacht op je afschrift', aansl.verwacht, { sterk: true })}
+            ${afRijen}
           </tbody></table>
-          <div class="mut" style="font-size:12px;line-height:1.5;max-width:420px">Zet <b style="color:var(--inkdim)">verwacht op je afschrift</b> naast het saldo dat je bank echt toont. Gelijk? Dan is je administratie compleet.<br><br>Wijkt het af, dan is er geld over de rekening gegaan dat het grootboek niet kent: er mist een <b style="color:var(--inkdim)">afschrift</b> in de import (alleen ${aansl.periode.van ? datumNL(aansl.periode.van) + ' t/m ' + datumNL(aansl.periode.tot) : 'niets'} is ingelezen), er is iets <b style="color:var(--inkdim)">dubbel</b> geboekt, of het <b style="color:var(--inkdim)">beginsaldo</b> van de rekening klopt niet met de stand vlak vóór de eerste ingelezen regel.</div>
+          <div class="mut" style="font-size:12px;line-height:1.5;max-width:420px">Ingelezen: ${aansl.periode.van ? datumNL(aansl.periode.van) + ' t/m ' + datumNL(aansl.periode.tot) : 'nog geen afschriften'}. Wat er ná die periode is gebeurd kent je administratie niet.<br><br>${uitleg}</div>
         </div></div>`;
 
       const tabs = ['open', 'gekoppeld', 'genegeerd', 'alle'];

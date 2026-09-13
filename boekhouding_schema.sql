@@ -115,6 +115,21 @@ CREATE TABLE IF NOT EXISTS leveranciers (
   KEY idx_lev_naam (naam)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Afschriftsaldi (MT940 :60F:/:62F:) — harde controle op het banksaldo.
+CREATE TABLE IF NOT EXISTS bank_afschriften (
+  id              INT UNSIGNED  NOT NULL AUTO_INCREMENT,
+  iban            VARCHAR(40)   NULL,
+  van             DATE          NULL,          -- eerste regel in het bestand
+  tot             DATE          NULL,          -- laatste regel in het bestand
+  beginsaldo      DECIMAL(12,2) NULL,
+  eindsaldo       DECIMAL(12,2) NULL,
+  formaat         VARCHAR(20)   NOT NULL,
+  geimporteerd_op DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_afschrift (iban, van, tot),
+  KEY idx_afschrift_tot (tot)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS banktransacties (
   id                 INT UNSIGNED  NOT NULL AUTO_INCREMENT,
   datum              DATE          NOT NULL,

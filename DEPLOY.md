@@ -106,6 +106,7 @@ opnieuw draaien kan geen kwaad.
 - `migraties/008_prive_aandeel.sql` — kolom `aandeel` op `prive_rekeningen` (voor gedeelde rekeningen, bv. 50%).
 - `migraties/009_prive_neutraal.sql` — neutrale (overboekings)categorieën; deze tellen niet mee als inkomst/uitgave.
 - `migraties/010_prive_koppel.sql` — kolom `koppel_id` op `prive_transacties` (overboekingen tussen eigen rekeningen: beide kanten gekoppeld).
+- `migraties/012_bank_afschriften.sql` — tabel `bank_afschriften` (begin-/eindsaldo van een MT940-import; de Bank-pagina legt het eindsaldo naast je grootboek). Lees ná deze migratie je nieuwste `.sta` opnieuw in — dubbele regels worden overgeslagen, maar de saldi worden nu wél bewaard.
 - `migraties/011_prive_ib_categorie.sql` — categorie "Inkomstenbelasting" (voorlopige + definitieve aanslag; teruggaven verrekenen met betalingen).
 
 ---

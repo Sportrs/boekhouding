@@ -194,6 +194,16 @@ function bank_importeer(string $inhoud): array {
         ]);
         if ($ins->rowCount() > 0) $geimp++; else $over++;
     }
+    // Het afschrift draagt zijn eigen begin- en eindsaldo. Bewaren, want dat is de
+    // enige harde controle op de vraag of het grootboek alles kent wat er over de
+    // rekening ging. Een ING-CSV heeft ze niet; dan valt er niets te bewaren.
+    $datums = array_column($p['regels'], 'datum');
+    if ($p['eindsaldo'] !== null && $datums) {
+        bank_afschrift_bewaar([
+            'iban' => $p['iban'] ?: null, 'van' => min($datums), 'tot' => max($datums),
+            'beginsaldo' => $p['beginsaldo'], 'eindsaldo' => $p['eindsaldo'], 'formaat' => $formaat,
+        ]);
+    }
     return [
         'geimporteerd' => $geimp, 'overgeslagen' => $over, 'totaal' => count($p['regels']),
         'iban' => $p['iban'], 'beginsaldo' => $p['beginsaldo'], 'eindsaldo' => $p['eindsaldo'],
@@ -250,6 +260,54 @@ function bank_lijst(?string $status = null): array {
     return $rows;
 }
 
+/* Een afschrift twee keer inlezen mag geen tweede rij opleveren: dezelfde periode
+   op dezelfde rekening is hetzelfde afschrift. Draait migratie 012 nog niet, dan
+   slaat dit stilletjes over — de import zelf moet blijven werken. */
+function bank_afschrift_bewaar(array $a): void {
+    try {
+        db()->prepare(
+            "INSERT INTO bank_afschriften (iban, van, tot, beginsaldo, eindsaldo, formaat)
+             VALUES (:iban, :van, :tot, :begin, :eind, :formaat)
+             ON DUPLICATE KEY UPDATE beginsaldo = VALUES(beginsaldo), eindsaldo = VALUES(eindsaldo),
+                                     formaat = VALUES(formaat), geimporteerd_op = NOW()"
+        )->execute([
+            ':iban' => $a['iban'], ':van' => $a['van'], ':tot' => $a['tot'],
+            ':begin' => $a['beginsaldo'], ':eind' => $a['eindsaldo'], ':formaat' => $a['formaat'],
+        ]);
+    } catch (PDOException $e) { /* tabel bestaat nog niet: migratie 012 */ }
+}
+
+/* Het laatste ingelezen afschrift met een eindsaldo erop. */
+function bank_laatste_afschrift(): ?array {
+    try {
+        $r = db()->query(
+            "SELECT iban, van, tot, beginsaldo, eindsaldo FROM bank_afschriften
+              WHERE eindsaldo IS NOT NULL AND tot IS NOT NULL
+              ORDER BY tot DESC, id DESC LIMIT 1"
+        )->fetch();
+    } catch (PDOException $e) { return null; }
+    if (!$r) return null;
+    return [
+        'iban' => $r['iban'], 'van' => $r['van'], 'tot' => $r['tot'],
+        'beginsaldo' => $r['beginsaldo'] !== null ? (float) $r['beginsaldo'] : null,
+        'eindsaldo' => (float) $r['eindsaldo'],
+    ];
+}
+
+/* Saldo van alle bank-/kasrekeningen zoals het grootboek het op $datum kent. */
+function bank_grootboeksaldo_op(string $datum): float {
+    $q = db()->prepare(
+        "SELECT COALESCE((SELECT SUM(k.opening_saldo) FROM rekeningen k WHERE k.is_bank = 1), 0)
+              + COALESCE((SELECT SUM(r.debet - r.credit)
+                            FROM transactie_regels r
+                            JOIN transacties t  ON t.id = r.transactie_id
+                            JOIN rekeningen  k  ON k.nummer = r.rekening AND k.is_bank = 1
+                           WHERE t.datum <= :d), 0) AS saldo"
+    );
+    $q->execute([':d' => $datum]);
+    return centen((float) $q->fetchColumn());
+}
+
 /* Aansluiting van het grootboek op je echte bankafschrift. Het grootboeksaldo van
    een bankrekening is beginsaldo + alle geboekte mutaties. Wat er op je afschrift
    staat is dat saldo plus alles wat nog niet geboekt is: open regels, en regels die
@@ -290,7 +348,16 @@ function bank_aansluiting(): array {
         if ($r['status'] !== 'gekoppeld') $nogNiet += $netto;
     }
     $periode = db()->query("SELECT MIN(datum) AS van, MAX(datum) AS tot FROM banktransacties")->fetch();
+    // De harde controle: het eindsaldo dat op het afschrift zelf staat, tegen het
+    // grootboek op diezelfde datum. Wijkt dat af, dan mist er een boeking, is er
+    // dubbel geboekt, of klopt het beginsaldo van de rekening niet.
+    $afschrift = bank_laatste_afschrift();
+    if ($afschrift) {
+        $afschrift['grootboek'] = bank_grootboeksaldo_op($afschrift['tot']);
+        $afschrift['verschil'] = centen($afschrift['eindsaldo'] - $afschrift['grootboek']);
+    }
     return [
+        'afschrift'  => $afschrift,
         'rekeningen' => $rekeningen,
         'grootboek'  => centen($grootboek),
         'statussen'  => $statussen,
