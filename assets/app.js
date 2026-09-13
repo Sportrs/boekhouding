@@ -455,11 +455,29 @@
       openMemoriaal(laad, { hint, initial: { datum: line.datum, omschrijving: oms, regels }, onSaved: async (id) => { await api('bank_koppel', { id: line.id, transactieId: id }, 'POST'); toast('Afgeletterd ✓'); laad(); } });
     }
     async function laad() {
-      let lijst, leveranciers, losse;
+      let lijst, leveranciers, losse, aansl;
       try {
         await loadAccounts();
-        [lijst, leveranciers, losse] = await Promise.all([api('bank_lijst', filter === 'alle' ? {} : { status: filter }), api('leveranciers'), api('bank_losse_boekingen')]);
+        [lijst, leveranciers, losse, aansl] = await Promise.all([api('bank_lijst', filter === 'alle' ? {} : { status: filter }), api('leveranciers'), api('bank_losse_boekingen'), api('bank_aansluiting')]);
       } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+
+      // Aansluiting: wat het grootboek zegt, plus wat er nog niet in zit, is wat er
+      // op je afschrift hoort te staan. Genegeerde regels tellen mee — het geld is
+      // wél bewogen, alleen heb je er geen boeking bij gemaakt.
+      const st_ = aansl.statussen || {};
+      const rij_ = (label, bedrag, opt) => `<tr><td style="padding:3px 0;${(opt && opt.in) ? 'padding-left:16px;' : ''}color:var(--${(opt && opt.sterk) ? 'ink' : 'inkdim'})">${label}</td><td class="num" style="padding:3px 0 3px 24px;color:var(--${(opt && opt.sterk) ? 'ink' : 'inkdim'});${(opt && opt.sterk) ? 'font-weight:600' : ''}">${euro(bedrag)}</td></tr>`;
+      const nogNietRijen = ['open', 'genegeerd'].filter((k) => st_[k] && st_[k].aantal).map((k) =>
+        rij_(`${st_[k].aantal} ${k === 'open' ? 'nog open' : 'genegeerde'} bankregel${st_[k].aantal === 1 ? '' : 's'}`, st_[k].netto, { in: true })).join('');
+      const aansluiting = `<div class="card" style="margin-bottom:16px"><div class="card-head"><span>Aansluiting banksaldo</span></div>
+        <div style="padding:12px 20px 16px;display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start">
+          <table style="width:auto"><tbody>
+            ${aansl.rekeningen.map((r) => rij_(`${esc(r.nummer)} — ${esc(r.naam)}`, r.saldo, { sterk: true })
+              + rij_('beginsaldo', r.opening, { in: true }) + rij_('geboekte mutaties', r.mutaties, { in: true })).join('')}
+            ${nogNietRijen ? rij_('nog niet geboekt', aansl.nogNiet, { sterk: true }) + nogNietRijen : ''}
+            ${rij_('verwacht op je afschrift', aansl.verwacht, { sterk: true })}
+          </tbody></table>
+          <div class="mut" style="font-size:12px;line-height:1.5;max-width:420px">Zet <b style="color:var(--inkdim)">verwacht op je afschrift</b> naast het saldo dat je bank echt toont. Gelijk? Dan is je administratie compleet.<br><br>Wijkt het af, dan is er geld over de rekening gegaan dat het grootboek niet kent: er mist een <b style="color:var(--inkdim)">afschrift</b> in de import (alleen ${aansl.periode.van ? datumNL(aansl.periode.van) + ' t/m ' + datumNL(aansl.periode.tot) : 'niets'} is ingelezen), er is iets <b style="color:var(--inkdim)">dubbel</b> geboekt, of het <b style="color:var(--inkdim)">beginsaldo</b> van de rekening klopt niet met de stand vlak vóór de eerste ingelezen regel.</div>
+        </div></div>`;
 
       const tabs = ['open', 'gekoppeld', 'genegeerd', 'alle'];
       const rows = lijst.length ? lijst.map((r) => {
@@ -509,6 +527,7 @@
       view.innerHTML =
         pageHead('Bank', 'Importeer je bankafschrift (MT940 of ING CSV) en letter betalingen af tegen boekingen.',
           `<button class="btn btn-brand" id="mt940">Afschrift importeren</button><input type="file" id="mt940file" accept=".sta,.csv,.txt,text/plain" style="display:none" />`) +
+        aansluiting +
         `<div class="help" style="margin-bottom:16px"><b>Per bankregel kies je één actie:</b> <b>Boek</b> = maak een nieuwe boeking (factuur — upload de PDF, BTW wordt ingevuld). <b>Overboeking</b> = geen factuur maar een verschuiving (naar privé, BTW-betaling, tussen banken). <b>Negeer</b> = niet relevant. De blauwe <b>Koppel</b>-knop verschijnt alléén als er al een boeking met hetzelfde bedrag bestaat — dan koppel je die (zodat je niet dubbel boekt). Groen "gekoppeld" = klaar.</div>
         <div class="tabs" style="margin-bottom:16px;display:flex;gap:8px">${tabs.map((t) => `<button data-tab="${t}" class="${filter === t ? 'active' : ''}">${t}</button>`).join('')}</div>
          <div class="card" style="margin-bottom:24px;overflow:hidden"><div style="overflow-x:auto"><table class="compact">

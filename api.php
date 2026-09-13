@@ -402,6 +402,9 @@ switch ($actie) {
     case 'bank_losse_boekingen':
         json_response(bank_losse_boekingen());
 
+    case 'bank_aansluiting':
+        json_response(bank_aansluiting());
+
     case 'bank_koppel':
         bank_koppel((int) ($in['id'] ?? 0), (int) ($in['transactieId'] ?? 0));
         json_response(['ok' => true]);

@@ -250,6 +250,56 @@ function bank_lijst(?string $status = null): array {
     return $rows;
 }
 
+/* Aansluiting van het grootboek op je echte bankafschrift. Het grootboeksaldo van
+   een bankrekening is beginsaldo + alle geboekte mutaties. Wat er op je afschrift
+   staat is dat saldo plus alles wat nog niet geboekt is: open regels, en regels die
+   je hebt genegeerd — die laatste zijn de stille lekken, want het geld is wél
+   bewogen. Sluit het daarna nog niet aan, dan mist er een bankregel in de import,
+   is er iets dubbel geboekt, of klopt het beginsaldo niet. */
+function bank_aansluiting(): array {
+    $rek = db()->query(
+        "SELECT k.nummer, k.naam, k.opening_saldo,
+                COALESCE((SELECT SUM(r.debet - r.credit) FROM transactie_regels r WHERE r.rekening = k.nummer), 0) AS mutaties
+           FROM rekeningen k
+          WHERE k.is_bank = 1
+          ORDER BY k.nummer ASC"
+    )->fetchAll();
+    $rekeningen = [];
+    $grootboek = 0.0;
+    foreach ($rek as $r) {
+        $opening = (float) $r['opening_saldo'];
+        $mutaties = (float) $r['mutaties'];
+        $saldo = centen($opening + $mutaties);
+        $grootboek += $saldo;
+        $rekeningen[] = [
+            'nummer' => (string) $r['nummer'], 'naam' => (string) $r['naam'],
+            'opening' => centen($opening), 'mutaties' => centen($mutaties), 'saldo' => $saldo,
+        ];
+    }
+    // Netto in de richting van je saldo: bijschrijvingen erbij, afschrijvingen eraf.
+    $st = db()->query(
+        "SELECT status, COUNT(*) AS aantal,
+                COALESCE(SUM(CASE WHEN afbij = 'bij' THEN bedrag ELSE -bedrag END), 0) AS netto
+           FROM banktransacties GROUP BY status"
+    )->fetchAll();
+    $statussen = [];
+    $nogNiet = 0.0;
+    foreach ($st as $r) {
+        $netto = centen((float) $r['netto']);
+        $statussen[(string) $r['status']] = ['aantal' => (int) $r['aantal'], 'netto' => $netto];
+        if ($r['status'] !== 'gekoppeld') $nogNiet += $netto;
+    }
+    $periode = db()->query("SELECT MIN(datum) AS van, MAX(datum) AS tot FROM banktransacties")->fetch();
+    return [
+        'rekeningen' => $rekeningen,
+        'grootboek'  => centen($grootboek),
+        'statussen'  => $statussen,
+        'nogNiet'    => centen($nogNiet),
+        'verwacht'   => centen($grootboek + $nogNiet),
+        'periode'    => ['van' => $periode['van'] ?? null, 'tot' => $periode['tot'] ?? null],
+    ];
+}
+
 /* Zelf geboekte facturen die geld van een bankrekening af halen of erop zetten,
    maar aan geen enkele bankregel gekoppeld zijn. Volgens het grootboek is er dan
    iets over de bank gegaan waar geen afschriftregel bij hoort: een dubbele
