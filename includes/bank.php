@@ -419,23 +419,33 @@ function bank_aansluiting(): array {
    iets over de bank gegaan waar geen afschriftregel bij hoort: een dubbele
    boeking, of een boeking die bij een nog open bankregel hoort.
 
-   btw_grondslag vult alleen de factuurboeking; memoriaalposten en alles uit een
-   XAF- of jaarrekening-import laten die leeg. Die horen hier niet thuis: de
-   boekhouding van de accountant loopt over een periode waarvoor je vaak geen
-   afschrift hebt ingelezen, en zou de lijst onbruikbaar maken. */
+   Twee soorten horen er wél in. Factuurboekingen (herkenbaar aan btw_grondslag,
+   die alleen díé vult) ongeacht de datum. En álles — memoriaalposten incluis —
+   vanaf de eerste ingelezen bankregel: over die periode heb je een afschrift, dus
+   daar hoort elke beweging op je bankrekening een bankregel bij. Juist de
+   overboeking-knop boekt rechtstreeks op de bank zonder BTW, en die bleef zo
+   buiten beeld.
+
+   Wat er bewust buiten blijft: de boekhouding van de accountant (XAF- of
+   jaarrekening-import) van vóór die eerste bankregel. Daarvoor heb je geen
+   afschrift ingelezen, dus valt er niets te koppelen en zou de lijst volstromen. */
 function bank_losse_boekingen(): array {
     $bankLeg = bank_leg_sql('t.id');
-    $q = db()->query(
+    // Geen enkele bankregel ingelezen? Dan valt er niets te koppelen en blijft de
+    // datumtak uit: 9999-12-31 zet hem effectief uit.
+    $vanaf = (string) (db()->query("SELECT MIN(datum) FROM banktransacties")->fetchColumn() ?: '9999-12-31');
+    $q = db()->prepare(
         "SELECT x.id, x.datum, x.omschrijving, x.factuur_nummer, x.bankbedrag FROM (
             SELECT t.id, t.datum, t.omschrijving, t.factuur_nummer, $bankLeg AS bankbedrag
             FROM transacties t
-            WHERE t.btw_grondslag IS NOT NULL
+            WHERE (t.btw_grondslag IS NOT NULL OR t.datum >= :vanaf)
               AND t.id NOT IN (SELECT transactie_id FROM banktransacties WHERE transactie_id IS NOT NULL)
          ) x
          WHERE ABS(x.bankbedrag) >= 0.005
          ORDER BY x.datum DESC, x.id DESC
          LIMIT 200"
     );
+    $q->execute([':vanaf' => $vanaf]);
     $rows = $q->fetchAll();
     foreach ($rows as &$r) { $r['id'] = (int) $r['id']; $r['bankbedrag'] = (float) $r['bankbedrag']; }
     return $rows;
