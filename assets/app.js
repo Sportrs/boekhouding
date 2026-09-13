@@ -471,20 +471,32 @@
       // Het afschrift draagt zijn eigen eindsaldo (MT940 :62F:). Dat tegen het
       // grootboek op diezelfde datum is de enige controle die geen bankapp nodig
       // heeft: klopt het, dan kent je administratie elke euro die er is bewogen.
-      const af = aansl.afschrift;
-      const sluitAan = af && Math.abs(af.verschil) < 0.005;
-      const afRijen = !af ? '' :
-        `<tr><td colspan="2" style="padding:12px 0 2px"><span class="mut" style="font-size:12px">laatste afschrift${af.iban ? ' \u00B7 ' + esc(af.iban) : ''} t/m ${datumNL(af.tot)}</span></td></tr>`
-        + rij_('eindsaldo volgens afschrift', af.eindsaldo, { sterk: true })
-        + rij_('grootboek op die datum', af.grootboek, { in: true })
-        + `<tr><td colspan="2" style="padding:4px 0;font-size:12px;line-height:1.4;color:var(--${sluitAan ? 'success' : 'danger'})">${sluitAan
-            ? '\u2713 sluit exact aan'
-            : '\u26A0 verschil ' + euro(Math.abs(af.verschil)) + (af.verschil > 0 ? ' \u2014 het grootboek kent minder geld dan het afschrift' : ' \u2014 het grootboek kent meer geld dan het afschrift')}</td></tr>`;
+      const afs = aansl.afschriften || [];
+      const af = afs.length ? afs[afs.length - 1] : null;
+      const klopt = (v) => v != null && Math.abs(v) < 0.005;
+      const sluitAan = af && klopt(af.verschilEind);
+      const oordeel = (v, wat) => v == null ? '' : `<tr><td colspan="2" style="padding:2px 0 6px;font-size:12px;line-height:1.4;color:var(--${klopt(v) ? 'success' : 'danger'})">${klopt(v)
+        ? '\u2713 ' + wat + ' sluit aan'
+        : '\u26A0 ' + wat + ': verschil ' + euro(Math.abs(v)) + (v > 0 ? ' \u2014 het grootboek kent minder geld dan de bank' : ' \u2014 het grootboek kent meer geld dan de bank')}</td></tr>`;
+      // Per afschrift beide uiteinden. Het beginsaldo is de belangrijkste: klopt dat
+      // niet, dan zit het gat vóór dat bestand en heeft zoeken in de regels erna
+      // geen zin.
+      const afRijen = afs.map((a) => (a.gatDavor
+          ? `<tr><td colspan="2" style="padding:10px 0 2px;font-size:12px;line-height:1.4;color:var(--danger)">\u26A0 Geen afschrift ingelezen over ${datumNL(a.gatDavor.van)} t/m ${datumNL(a.gatDavor.tot)} \u2014 wat daar bewoog kent je administratie niet.</td></tr>`
+          : '')
+        + `<tr><td colspan="2" style="padding:12px 0 2px"><span class="mut" style="font-size:12px">afschrift${a.iban ? ' \u00B7 ' + esc(a.iban) : ''} ${a.van ? datumNL(a.van) : ''} t/m ${datumNL(a.tot)}</span></td></tr>`
+        + (a.beginsaldo != null ? rij_('beginsaldo volgens afschrift', a.beginsaldo, { sterk: true })
+            + rij_(`grootboek op ${datumNL(a.voorVan)}`, a.grootboekVan, { in: true }) + oordeel(a.verschilBegin, 'begin') : '')
+        + (a.eindsaldo != null ? rij_('eindsaldo volgens afschrift', a.eindsaldo, { sterk: true })
+            + rij_(`grootboek op ${datumNL(a.tot)}`, a.grootboekTot, { in: true }) + oordeel(a.verschilEind, 'eind') : '')).join('');
+      const eersteScheef = afs.find((a) => !klopt(a.verschilBegin) && a.verschilBegin != null);
       const uitleg = !af
-        ? `Importeer een <b style="color:var(--inkdim)">MT940 (.sta)</b> om dit hard te controleren: zo'n bestand draagt zijn eigen eindsaldo, en dat legt de app dan naast je grootboek. Een ING-CSV bevat geen saldi. Zie je deze regel na een MT940-import nog steeds, draai dan <b style="color:var(--inkdim)">migraties/012_bank_afschriften.sql</b>.`
+        ? `Importeer een <b style="color:var(--inkdim)">MT940 (.sta)</b> om dit hard te controleren: zo'n bestand draagt zijn eigen begin- en eindsaldo, en die legt de app naast je grootboek. Een ING-CSV bevat geen saldi. Zie je deze regel na een MT940-import nog steeds, draai dan <b style="color:var(--inkdim)">migraties/012_bank_afschriften.sql</b>.`
+        : eersteScheef
+          ? `Begin bij het <b style="color:var(--inkdim)">beginsaldo van ${datumNL(eersteScheef.van)}</b>: dat klopt al niet, dus het gat zit <b style="color:var(--inkdim)">vóór</b> dat afschrift en in de regels daarná zoeken heeft geen zin. Twee oorzaken: er is een afschrift over de periode ervóór nooit ingelezen (lees die <b style="color:var(--inkdim)">.sta</b>-bestanden alsnog in \u2014 dubbele regels worden overgeslagen), of het <b style="color:var(--inkdim)">beginsaldo</b> van de rekening zelf sluit niet aan op de stand vlak vóór je eerste bankregel.`
         : sluitAan
           ? `Je grootboek kent elke euro die er t/m ${datumNL(af.tot)} over de rekening ging. Wijkt het saldo in je bankapp daarvan af, dan zit dat verschil volledig in bewegingen <b style="color:var(--inkdim)">ná</b> die datum \u2014 importeer het nieuwste afschrift en boek de nieuwe regels.`
-          : `Er ging geld over de rekening dat je grootboek niet kent, of andersom. In deze volgorde zoeken: staat er nog iets bij <b style="color:var(--inkdim)">open</b> of <b style="color:var(--inkdim)">genegeerd</b> (het geld bewoog wél, alleen boekte je het niet)? Staat er iets in <b style="color:var(--inkdim)">Facturen zonder bankregel</b> hieronder (dan is er dubbel geboekt)? En anders klopt het <b style="color:var(--inkdim)">beginsaldo</b> van je bankrekening niet met de stand vlak vóór ${aansl.periode.van ? datumNL(aansl.periode.van) : 'de eerste ingelezen regel'}.`;
+          : `Het beginsaldo klopt, het eindsaldo niet: er ontbreekt een boeking <b style="color:var(--inkdim)">binnen</b> ${af.van ? datumNL(af.van) + ' t/m ' + datumNL(af.tot) : 'dit afschrift'}. Staat er nog iets bij <b style="color:var(--inkdim)">open</b> of <b style="color:var(--inkdim)">genegeerd</b> (het geld bewoog wél, alleen boekte je het niet)? Of staat er iets in <b style="color:var(--inkdim)">Facturen zonder bankregel</b> hieronder \u2014 dan is er dubbel geboekt.`;
       const aansluiting = `<div class="card" style="margin-bottom:16px"><div class="card-head"><span>Aansluiting banksaldo</span></div>
         <div style="padding:12px 20px 16px;display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start">
           <table style="width:auto"><tbody>

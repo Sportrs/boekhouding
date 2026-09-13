@@ -277,21 +277,48 @@ function bank_afschrift_bewaar(array $a): void {
     } catch (PDOException $e) { /* tabel bestaat nog niet: migratie 012 */ }
 }
 
-/* Het laatste ingelezen afschrift met een eindsaldo erop. */
-function bank_laatste_afschrift(): ?array {
+/* Elk ingelezen afschrift met beide uiteinden tegen het grootboek gelegd. Het
+   eindsaldo vindt een ontbrekende boeking; het beginsaldo vindt iets anders, en
+   dat is hier het venijn: klopt het beginsaldo van een bestand niet, dan zit het
+   gat vóór dat bestand — een niet-ingelezen afschrift tussen twee imports, of een
+   beginsaldo op de rekening dat niet aansluit. "01-07 t/m 01-10" in het overzicht
+   is namelijk alleen de eerste en de laatste regel; over de maanden ertussen zegt
+   het niets. Een gat tussen twee opeenvolgende afschriften melden we apart. */
+function bank_afschriften_aansluiting(): array {
     try {
-        $r = db()->query(
+        $rows = db()->query(
             "SELECT iban, van, tot, beginsaldo, eindsaldo FROM bank_afschriften
-              WHERE eindsaldo IS NOT NULL AND tot IS NOT NULL
-              ORDER BY tot DESC, id DESC LIMIT 1"
-        )->fetch();
-    } catch (PDOException $e) { return null; }
-    if (!$r) return null;
-    return [
-        'iban' => $r['iban'], 'van' => $r['van'], 'tot' => $r['tot'],
-        'beginsaldo' => $r['beginsaldo'] !== null ? (float) $r['beginsaldo'] : null,
-        'eindsaldo' => (float) $r['eindsaldo'],
-    ];
+              WHERE tot IS NOT NULL ORDER BY tot ASC, id ASC LIMIT 24"
+        )->fetchAll();
+    } catch (PDOException $e) { return []; }
+    $uit = [];
+    $vorigeTot = null;
+    foreach ($rows as $r) {
+        $a = [
+            'iban' => $r['iban'], 'van' => $r['van'], 'tot' => $r['tot'],
+            'beginsaldo' => $r['beginsaldo'] !== null ? (float) $r['beginsaldo'] : null,
+            'eindsaldo'  => $r['eindsaldo']  !== null ? (float) $r['eindsaldo']  : null,
+            'gatDavor'   => null,
+        ];
+        if ($a['eindsaldo'] !== null) {
+            $a['grootboekTot'] = bank_grootboeksaldo_op((string) $r['tot']);
+            $a['verschilEind'] = centen($a['eindsaldo'] - $a['grootboekTot']);
+        }
+        if ($a['beginsaldo'] !== null && $r['van']) {
+            // Het beginsaldo geldt aan het begin van de eerste dag, dus vergelijken
+            // met het grootboek aan het eind van de dag ervóór.
+            $a['voorVan'] = date('Y-m-d', strtotime((string) $r['van'] . ' -1 day'));
+            $a['grootboekVan'] = bank_grootboeksaldo_op($a['voorVan']);
+            $a['verschilBegin'] = centen($a['beginsaldo'] - $a['grootboekVan']);
+        }
+        // Sluiten twee afschriften niet op elkaar aan, dan mist er een bestand.
+        if ($vorigeTot !== null && $r['van'] && strtotime((string) $r['van']) > strtotime($vorigeTot . ' +1 day')) {
+            $a['gatDavor'] = ['van' => date('Y-m-d', strtotime($vorigeTot . ' +1 day')), 'tot' => $a['voorVan'] ?? $r['van']];
+        }
+        $vorigeTot = (string) $r['tot'];
+        $uit[] = $a;
+    }
+    return $uit;
 }
 
 /* Saldo van alle bank-/kasrekeningen zoals het grootboek het op $datum kent. */
@@ -351,13 +378,9 @@ function bank_aansluiting(): array {
     // De harde controle: het eindsaldo dat op het afschrift zelf staat, tegen het
     // grootboek op diezelfde datum. Wijkt dat af, dan mist er een boeking, is er
     // dubbel geboekt, of klopt het beginsaldo van de rekening niet.
-    $afschrift = bank_laatste_afschrift();
-    if ($afschrift) {
-        $afschrift['grootboek'] = bank_grootboeksaldo_op($afschrift['tot']);
-        $afschrift['verschil'] = centen($afschrift['eindsaldo'] - $afschrift['grootboek']);
-    }
+    $afschriften = bank_afschriften_aansluiting();
     return [
-        'afschrift'  => $afschrift,
+        'afschriften' => $afschriften,
         'rekeningen' => $rekeningen,
         'grootboek'  => centen($grootboek),
         'statussen'  => $statussen,
