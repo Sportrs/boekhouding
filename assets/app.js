@@ -524,6 +524,12 @@
         // geboekt (bedrag door 1,21 gedeeld terwijl er geen NL-BTW in zat).
         const bankKant = r.boeking_bank_bedrag == null ? null : (r.afbij === 'af' ? r.boeking_bank_bedrag : -r.boeking_bank_bedrag);
         const scheef = bankKant != null && Math.abs(bankKant - r.bedrag) >= 0.005;
+        // Een boeking hoort de dag te dragen waarop het geld bewoog. Kreeg hij de
+        // factuurdatum mee, dan verlaat het geld je grootboek op een andere dag dan
+        // je rekening — en valt het zelfs in een andere periode dan de overdracht van
+        // je boekhouder, waardoor niets meer aansluit.
+        const datumScheef = r.transactie_id != null && r.boeking_datum && r.boeking_datum !== r.datum;
+        const datumRij = datumScheef ? `<tr><td colspan="7" style="padding:8px 12px;border-top:0;font-size:12px;line-height:1.5;color:var(--warning)">\u26A0 Betaald op <b>${datumNL(r.datum)}</b>, maar de boeking staat op <b>${datumNL(r.boeking_datum)}</b> \u2014 waarschijnlijk de factuurdatum. In je grootboek gaat het geld dan op de verkeerde dag van je rekening af, en je banksaldo sluit op geen enkele datum meer aan. Ontkoppel, verwijder de boeking en boek opnieuw; de datum blijft dan staan op ${datumNL(r.datum)}.</td></tr>` : '';
         const scheefRij = scheef ? `<tr><td colspan="7" style="padding:8px 12px;border-top:0;font-size:12px;line-height:1.5;color:var(--danger)">\u26A0 De gekoppelde boeking zet <b>${euro(bankKant)}</b> op je bankrekening, maar er is <b>${euro(r.bedrag)}</b> ${r.afbij === 'af' ? 'afgeschreven' : 'bijgeschreven'} \u2014 <b>${euro(Math.abs(r.bedrag - bankKant))}</b> verschil. Zo klopt het saldo van je bankrekening niet. <b>Ontkoppel</b> deze regel, verwijder de boeking bij <b>Boekingen</b> en boek hem opnieuw via <b>Boek</b> met het juiste BTW-regime.</td></tr>` : '';
         return `<tr>
           <td class="num" style="text-align:left">${datumNL(r.datum)}</td>
@@ -532,7 +538,7 @@
           <td data-tip="${esc(r.tegenrekening_naam || '')}${r.leverancier_naam ? ' → ' + esc(r.leverancier_naam) : ''}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.tegenrekening_naam || '—')}${r.leverancier_naam ? ` <span class="mut">→ ${esc(r.leverancier_naam)}</span>` : ''}</td>
           <td data-tip="${esc(r.omschrijving || '')}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.omschrijving || '')}</td>
           <td>${badge}</td>
-          <td class="r" style="white-space:nowrap">${acties}</td></tr>${scheefRij}`;
+          <td class="r" style="white-space:nowrap">${acties}</td></tr>${scheefRij}${datumRij}`;
       }).join('') : `<tr><td colspan="7" class="empty">Geen bankregels — importeer een MT940 (.sta) bestand.</td></tr>`;
 
       // Boekingen die wél over de bank lopen maar bij geen enkele bankregel horen.
@@ -1960,6 +1966,8 @@
       btwPeriode: (initial && initial.btwPeriode) || '',
       // Gevuld als de PDF een ander bedrag noemt dan er van de bank is afgeschreven.
       valutaTip: '',
+      // Gevuld als de factuurdatum afwijkt van de dag waarop er betaald is.
+      datumTip: '',
       // Het brutobedrag van de bankregel waar deze boeking bij hoort (leeg bij een
       // losse factuur). Dit bedrag is leidend: de bankregel in de journaalpost moet
       // er exact aan gelijk zijn, en de BTW-splitsing rekent eruit terug.
@@ -2041,6 +2049,7 @@
             <label class="field"><span>BTW</span><select id="pct">${pctOpts}</select></label>
           </div>
           ${st.valutaTip ? `<div class="help" style="border-color:rgba(245,158,11,.5);background:rgba(245,158,11,.12)">⚠ ${st.valutaTip}</div>` : ''}
+          ${st.datumTip ? `<div class="help" style="border-color:rgba(245,158,11,.5);background:rgba(245,158,11,.12)">⚠ De factuur is gedateerd <b>${datumNL(st.datumTip)}</b>, maar er is op <b>${datumNL(st.datum)}</b> betaald. De <b>betaaldatum</b> is aangehouden: anders gaat het geld in je grootboek op een andere dag van je rekening dan in het echt, en sluit je banksaldo niet meer aan. Hoort de BTW in een eerder kwartaal? Kies dat hieronder bij <b>BTW meenemen in aangifte</b>.</div>` : ''}
           <div class="row">
             <label class="field"><span>${st.type === 'inkoop' ? 'Kostenrekening' : 'Omzetrekening'}</span><select id="gb">${opties(gbList, st.grootboek)}</select></label>
             <label class="field"><span>Betaald via</span><select id="bet">${opties(banken, st.betaal)}</select></label>
@@ -2090,7 +2099,13 @@
           const d = await api('factuur_lezen', { pdf: b64, type: st.type }, 'POST');
           if (d.omschrijving || d.leverancier) st.omschrijving = factuurOms(d);
           if (d.factuurNummer) st.factuurNummer = d.factuurNummer;
-          if (d.factuurDatum) st.datum = d.factuurDatum;
+          // Boek je vanaf een bankregel, dan is de betaaldatum leidend, net als het
+          // bedrag. Neem je de factuurdatum over, dan verlaat het geld je rekening in
+          // je grootboek op een andere dag dan in werkelijkheid en sluit je banksaldo
+          // op geen enkele datum meer aan: een factuur van april die je in juli
+          // betaalt haalt het geld er maanden te vroeg af.
+          if (d.factuurDatum && st.bruto == null) st.datum = d.factuurDatum;
+          else if (d.factuurDatum && d.factuurDatum !== st.datum) st.datumTip = d.factuurDatum;
           // Het BTW-regime van de leverancier wint van wat de AI op de factuur ziet:
           // een EU-factuur met verlegde BTW vermeldt 0% en zou "verlegd" (rubriek 4b)
           // anders overschrijven. Verandert het tarief, dan splitst zetPct het
