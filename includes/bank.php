@@ -201,17 +201,34 @@ function bank_importeer(string $inhoud): array {
     ];
 }
 
+/* Wat een boeking volgens het grootboek met de liquide middelen doet, in de
+   richting van een afschrijving (credit op de bank is positief). Dít hoort gelijk
+   te zijn aan het bedrag van de bankregel — niet de som van alle debetregels:
+   bij verlegde BTW staat er een extra debetregel die de bank niet raakt. */
+function bank_leg_sql(string $transactieId): string {
+    return "(SELECT COALESCE(SUM(rr.credit - rr.debet), 0)
+               FROM transactie_regels rr
+               JOIN rekeningen kk ON kk.nummer = rr.rekening AND kk.is_bank = 1
+              WHERE rr.transactie_id = $transactieId)";
+}
+
 // --- Overzicht + afletteren -----------------------------------------
 function bank_lijst(?string $status = null): array {
+    $bankLegGekoppeld = bank_leg_sql('b.transactie_id');
+    $bankLegKandidaat = bank_leg_sql('tt.id');
     $sql = "SELECT b.id, b.datum, b.bedrag, b.afbij, b.tegenrekening_iban, b.tegenrekening_naam,
                    b.omschrijving, b.status, b.transactie_id, b.leverancier_id,
                    l.naam AS leverancier_naam, l.btw_regime, l.standaard_rekening,
                    t.omschrijving AS boeking_oms, t.datum AS boeking_datum,
+                   $bankLegGekoppeld AS boeking_bank_bedrag,
                    (SELECT COUNT(*) FROM (
-                       SELECT tt.id, (SELECT COALESCE(SUM(debet),0) FROM transactie_regels rr WHERE rr.transactie_id = tt.id) AS tot
+                       SELECT tt.id,
+                              (SELECT COALESCE(SUM(debet),0) FROM transactie_regels rr WHERE rr.transactie_id = tt.id) AS tot,
+                              $bankLegKandidaat AS banktot
                        FROM transacties tt
                        WHERE tt.id NOT IN (SELECT transactie_id FROM banktransacties WHERE transactie_id IS NOT NULL)
-                   ) mm WHERE ABS(mm.tot - b.bedrag) < 0.005) AS match_count
+                   ) mm WHERE ABS(mm.tot - b.bedrag) < 0.005
+                        OR ABS(mm.banktot - (CASE WHEN b.afbij = 'af' THEN b.bedrag ELSE -b.bedrag END)) < 0.005) AS match_count
             FROM banktransacties b
             LEFT JOIN leveranciers l ON l.id = b.leverancier_id
             LEFT JOIN transacties  t ON t.id = b.transactie_id";
@@ -227,28 +244,36 @@ function bank_lijst(?string $status = null): array {
         $r['transactie_id'] = $r['transactie_id'] !== null ? (int) $r['transactie_id'] : null;
         $r['leverancier_id'] = $r['leverancier_id'] !== null ? (int) $r['leverancier_id'] : null;
         $r['match_count'] = (int) ($r['match_count'] ?? 0);
+        // Positief = credit op de bank (afschrijving). Vergelijk met bedrag + afbij.
+        $r['boeking_bank_bedrag'] = $r['transactie_id'] !== null ? (float) $r['boeking_bank_bedrag'] : null;
     }
     return $rows;
 }
 
 /* Kandidaat-boekingen met hetzelfde (incl.) bedrag die nog niet gekoppeld zijn. */
 function bank_suggesties(int $id): array {
-    $b = db()->prepare("SELECT bedrag, datum FROM banktransacties WHERE id = :id");
+    $b = db()->prepare("SELECT bedrag, datum, afbij FROM banktransacties WHERE id = :id");
     $b->execute([':id' => $id]);
     $bt = $b->fetch();
     if (!$bt) return [];
+    $bankLeg = bank_leg_sql('t.id');
     $q = db()->prepare(
         "SELECT x.id, x.datum, x.omschrijving, x.factuur_nummer, x.totaal FROM (
             SELECT t.id, t.datum, t.omschrijving, t.factuur_nummer,
-                   (SELECT COALESCE(SUM(debet),0) FROM transactie_regels r WHERE r.transactie_id = t.id) AS totaal
+                   (SELECT COALESCE(SUM(debet),0) FROM transactie_regels r WHERE r.transactie_id = t.id) AS totaal,
+                   $bankLeg AS banktotaal
             FROM transacties t
             WHERE t.id NOT IN (SELECT transactie_id FROM banktransacties WHERE transactie_id IS NOT NULL)
          ) x
-         WHERE ABS(x.totaal - :bedrag) < 0.005
+         WHERE ABS(x.totaal - :bedrag) < 0.005 OR ABS(x.banktotaal - :banksaldo) < 0.005
          ORDER BY ABS(DATEDIFF(x.datum, :datum)) ASC
          LIMIT 10"
     );
-    $q->execute([':bedrag' => $bt['bedrag'], ':datum' => $bt['datum']]);
+    $q->execute([
+        ':bedrag' => $bt['bedrag'],
+        ':banksaldo' => $bt['afbij'] === 'af' ? (float) $bt['bedrag'] : -((float) $bt['bedrag']),
+        ':datum' => $bt['datum'],
+    ]);
     $rows = $q->fetchAll();
     foreach ($rows as &$r) { $r['id'] = (int) $r['id']; $r['totaal'] = (float) $r['totaal']; }
     return $rows;

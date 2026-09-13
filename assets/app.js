@@ -387,11 +387,10 @@
     }
     async function boekVanBank(line) {
       const regime = line.btw_regime || '21';
-      const incl = Number(line.bedrag);
+      const incl = round2(Number(line.bedrag));
       const initial = { datum: line.datum, omschrijving: line.leverancier_naam || line.tegenrekening_naam || line.omschrijving || '', grootboekrekening: line.standaard_rekening || '' };
-      if (regime === 'geen') { initial.btwRegime = 'geen'; initial.bedragExBTW = round2(incl); }
-      else if (regime === 'verlegd' || regime === 'verlegd_niet_eu') { initial.btwPercentage = regime; initial.bedragExBTW = round2(incl); }
-      else { const p = Number(regime) || 0; initial.btwPercentage = String(regime); initial.bedragExBTW = p > 0 ? round2(incl / (1 + p / 100)) : round2(incl); }
+      if (regime === 'geen') initial.btwRegime = 'geen'; else initial.btwPercentage = String(regime);
+      initial.bedragExBTW = exclVanBruto(incl, regime);
       const type = line.afbij === 'af' ? 'inkoop' : 'verkoop';
       // Kostenrekening voorstellen: de leverancier wint, anders kijken we hoe je
       // deze tegenpartij de vorige keren boekte.
@@ -471,6 +470,12 @@
           : r.status === 'gekoppeld'
             ? `<button class="linkbtn" data-ontkoppel="${r.id}">ontkoppel</button>`
             : `<button class="linkbtn" data-open="${r.id}">heropenen</button>`;
+        // De bankregel van de gekoppelde boeking hoort exact het afgeschreven bedrag
+        // te zijn. Is dat niet zo, dan is er ooit over een verkeerd BTW-regime heen
+        // geboekt (bedrag door 1,21 gedeeld terwijl er geen NL-BTW in zat).
+        const bankKant = r.boeking_bank_bedrag == null ? null : (r.afbij === 'af' ? r.boeking_bank_bedrag : -r.boeking_bank_bedrag);
+        const scheef = bankKant != null && Math.abs(bankKant - r.bedrag) >= 0.005;
+        const scheefRij = scheef ? `<tr><td colspan="7" style="padding:8px 12px;border-top:0;font-size:12px;line-height:1.5;color:var(--danger)">\u26A0 De gekoppelde boeking zet <b>${euro(bankKant)}</b> op je bankrekening, maar er is <b>${euro(r.bedrag)}</b> ${r.afbij === 'af' ? 'afgeschreven' : 'bijgeschreven'} \u2014 <b>${euro(Math.abs(r.bedrag - bankKant))}</b> verschil. Zo klopt het saldo van je bankrekening niet. <b>Ontkoppel</b> deze regel, verwijder de boeking bij <b>Boekingen</b> en boek hem opnieuw via <b>Boek</b> met het juiste BTW-regime.</td></tr>` : '';
         return `<tr>
           <td class="num" style="text-align:left">${datumNL(r.datum)}</td>
           <td class="${r.afbij === 'af' ? 'dan' : 'suc'}">${r.afbij}</td>
@@ -478,7 +483,7 @@
           <td data-tip="${esc(r.tegenrekening_naam || '')}${r.leverancier_naam ? ' → ' + esc(r.leverancier_naam) : ''}" style="max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.tegenrekening_naam || '—')}${r.leverancier_naam ? ` <span class="mut">→ ${esc(r.leverancier_naam)}</span>` : ''}</td>
           <td data-tip="${esc(r.omschrijving || '')}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.omschrijving || '')}</td>
           <td>${badge}</td>
-          <td class="r" style="white-space:nowrap">${acties}</td></tr>`;
+          <td class="r" style="white-space:nowrap">${acties}</td></tr>${scheefRij}`;
       }).join('') : `<tr><td colspan="7" class="empty">Geen bankregels — importeer een MT940 (.sta) bestand.</td></tr>`;
 
       const levRows = leveranciers.length ? leveranciers.map((l) => `<tr>
@@ -1830,6 +1835,19 @@
     return uit;
   }
 
+  const isVerlegdRegime = (p) => p === 'verlegd' || p === 'verlegd_niet_eu';
+  const pctGetal = (p) => (p === 'geen' ? 0 : isVerlegdRegime(p) ? 21 : Number(p) || 0);
+
+  /* Een bankregel is bruto: precies wat er van de rekening is gegaan. Alleen bij
+     NL-BTW (21/9%) zit daar BTW in die eruit gesplitst wordt; bij "geen", 0% en
+     verlegd is het bedrag excl. BTW gelijk aan het bankbedrag. Delen door 1,21 bij
+     een buitenlandse factuur maakt de kosten te laag en de bankregel te klein. */
+  function exclVanBruto(bruto, regime) {
+    const p = pctGetal(regime);
+    if (!p || regime === 'geen' || isVerlegdRegime(regime)) return round2(bruto);
+    return round2(bruto - round2((bruto * p) / (100 + p)));
+  }
+
   function openBoeking(initial, initialType, opts) {
     opts = opts || {};
     const accounts = state.accounts;
@@ -1853,24 +1871,53 @@
       btwPeriode: (initial && initial.btwPeriode) || '',
       // Gevuld als de PDF een ander bedrag noemt dan er van de bank is afgeschreven.
       valutaTip: '',
+      // Het brutobedrag van de bankregel waar deze boeking bij hoort (leeg bij een
+      // losse factuur). Dit bedrag is leidend: de bankregel in de journaalpost moet
+      // er exact aan gelijk zijn, en de BTW-splitsing rekent eruit terug.
+      bruto: opts.bankBedrag != null ? round2(opts.bankBedrag) : null,
     };
 
     const ov = document.createElement('div');
     ov.className = 'overlay';
     document.body.appendChild(ov);
     function close() { ov.remove(); }
-    const isVerlegd = (p) => p === 'verlegd' || p === 'verlegd_niet_eu';
-    const pctNum = () => (st.pct === 'geen' ? 0 : isVerlegd(st.pct) ? 21 : Number(st.pct) || 0);
+    const isVerlegd = isVerlegdRegime;
+    const pctNum = () => pctGetal(st.pct);
+    // Regime wijzigen betekent opnieuw splitsen. Deed de app dit niet, dan bleef het
+    // door 1,21 gedeelde bedrag staan als je naar "geen (buitenland)" omschakelde en
+    // werd er 1,57 te weinig van de bank afgeboekt.
+    function zetPct(p) {
+      st.pct = p;
+      if (st.bruto != null) st.bedrag = String(exclVanBruto(st.bruto, p));
+    }
 
     function opties(list, sel) {
       if (!list.length) return '<option value="">— geen rekeningen —</option>';
       return list.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === sel ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('');
     }
-    function preview() {
+    // Eén plek waar excl./BTW/totaal uitgerekend worden, zodat de preview precies
+    // laat zien wat de server boekt.
+    function bedragen() {
       const excl = round2(Number(String(st.bedrag).replace(',', '.')) || 0);
       const verlegd = isVerlegd(st.pct);
-      const btw = st.pct === 'geen' ? 0 : round2((excl * pctNum()) / 100);
-      const totaal = round2(excl + (verlegd ? 0 : btw));
+      let btw = st.pct === 'geen' ? 0 : round2((excl * pctNum()) / 100);
+      // Bij een bankregel legt de server de afrondingscent in de BTW-regel, zodat de
+      // bankregel exact het afgeschreven bedrag blijft. Hier hetzelfde doen.
+      if (st.bruto != null && !verlegd && pctNum() > 0) {
+        const cent = round2(st.bruto - round2(excl + btw));
+        if (Math.abs(cent) <= 0.01 && round2(btw + cent) >= 0) btw = round2(btw + cent);
+      }
+      return { excl, verlegd, btw, totaal: round2(excl + (verlegd ? 0 : btw)) };
+    }
+    // De bankregel is per definitie gelijk aan wat er van de rekening is gegaan.
+    function bankWaarschuwing() {
+      if (st.bruto == null) return '';
+      const { totaal } = bedragen();
+      if (Math.abs(totaal - st.bruto) < 0.005) return '';
+      return `<div class="mut" style="font-size:12px;margin-top:8px;line-height:1.5;color:var(--danger)">\u26A0 Er is <b>${euro(st.bruto)}</b> van je rekening gegaan, maar deze post komt uit op <b>${euro(totaal)}</b> \u2014 een verschil van <b>${euro(Math.abs(st.bruto - totaal))}</b>. De bankregel hoort gelijk te zijn aan het afschrijfbedrag, anders loopt je banksaldo scheef. Pas het bedrag of het BTW-regime aan; zo boeken lukt niet.</div>`;
+    }
+    function preview() {
+      const { excl, verlegd, btw, totaal } = bedragen();
       const rgls = [];
       if (st.type === 'inkoop') {
         rgls.push([st.grootboek, excl, 0]);
@@ -1918,14 +1965,28 @@
           <div class="mut" style="font-size:12px;line-height:1.45">BTW-regime: <b style="color:var(--inkdim)">21/9/0%</b> = Nederland · <b style="color:var(--inkdim)">geen (buitenland)</b> = niet-EU (bv. Anthropic, VS) · <b style="color:var(--inkdim)">verlegd — EU (4b)</b> = EU-diensten (bv. Google/Microsoft, Ierland) · <b style="color:var(--inkdim)">verlegd — buiten EU (4a)</b> = diensten van buiten de EU waarbij de BTW naar jou is verlegd. Staat er op de factuur wél een BTW-bedrag? Dan is het gewoon 21% en géén verlegging. Weet je het niet zeker, vraag je boekhouder.</div>
           <div class="preview"><div class="h">Journaalpost-preview (zo wordt het geboekt)</div>
             <table><thead><tr><th style="padding:4px 16px">Rekening</th><th class="r" style="padding:4px 16px">Debet</th><th class="r" style="padding:4px 16px">Credit</th></tr></thead>
-            <tbody id="prev">${preview()}</tbody></table></div>
+            <tbody id="prev">${preview()}</tbody></table><div id="prevwaarsch" style="padding:0 16px 4px">${bankWaarschuwing()}</div></div>
         </div>
         <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-success" id="boek">Boeken ✓</button></div></div>`;
 
       ov.querySelector('.x').onclick = close;
       ov.querySelector('#annuleer').onclick = close;
       ov.querySelectorAll('[data-type]').forEach((b) => b.onclick = () => { st.type = b.dataset.type; render(); });
-      const bind = (id, key) => { const el = ov.querySelector('#' + id); el.oninput = () => { st[key] = el.value; if (['bedrag', 'pct', 'grootboek', 'betaal'].includes(key)) ov.querySelector('#prev').innerHTML = preview(); }; el.onchange = el.oninput; };
+      const updatePreview = () => {
+        const pv = ov.querySelector('#prev'); if (pv) pv.innerHTML = preview();
+        const wa = ov.querySelector('#prevwaarsch'); if (wa) wa.innerHTML = bankWaarschuwing();
+      };
+      const bind = (id, key) => {
+        const el = ov.querySelector('#' + id);
+        el.oninput = () => {
+          // Het regime bepaalt de splitsing, dus dan moet ook het bedrag opnieuw
+          // gezet worden \u2014 opnieuw tekenen zodat het veld het nieuwe bedrag toont.
+          if (key === 'pct') { const bruto = st.bruto; zetPct(el.value); if (bruto != null) return render(); }
+          else st[key] = el.value;
+          if (['bedrag', 'pct', 'grootboek', 'betaal'].includes(key)) updatePreview();
+        };
+        el.onchange = el.oninput;
+      };
       bind('datum', 'datum'); bind('fn', 'factuurNummer'); bind('oms', 'omschrijving');
       bind('bedrag', 'bedrag'); bind('pct', 'pct'); bind('gb', 'grootboek'); bind('bet', 'betaal');
       if (ov.querySelector('#btwper')) bind('btwper', 'btwPeriode');
@@ -1941,6 +2002,11 @@
           if (d.omschrijving || d.leverancier) st.omschrijving = factuurOms(d);
           if (d.factuurNummer) st.factuurNummer = d.factuurNummer;
           if (d.factuurDatum) st.datum = d.factuurDatum;
+          // Het BTW-regime van de leverancier wint van wat de AI op de factuur ziet:
+          // een EU-factuur met verlegde BTW vermeldt 0% en zou "verlegd" (rubriek 4b)
+          // anders overschrijven. Verandert het tarief, dan splitst zetPct het
+          // bankbedrag meteen opnieuw.
+          if (d.btwPercentage != null && st.pct !== 'geen' && !isVerlegd(st.pct)) zetPct(String(d.btwPercentage));
           // Boek je vanaf een bankregel, dan is het bankbedrag leidend. Een factuur
           // in vreemde valuta (USD) noemt een ander bedrag dan er in euro's van je
           // rekening is afgeschreven; klakkeloos overnemen zet het dollarbedrag in
@@ -1950,8 +2016,10 @@
             const pdfExcl = round2(Number(d.bedragExBTW) || 0);
             const pdfTotaal = round2(pdfExcl + (Number(d.btwBedrag) || 0));
             st.valutaTip = '';
-            if (opts.bankBedrag && Math.abs(pdfTotaal - opts.bankBedrag) > 0.02) {
-              st.valutaTip = `De factuur vermeldt <b>${esc(d.valuta || '')} ${pdfTotaal.toFixed(2)}</b>, maar er is <b>${euro(opts.bankBedrag)}</b> van je rekening afgeschreven${vreemd ? ` — de factuur staat in <b>${esc(d.valuta)}</b>` : ''}. Het <b>bankbedrag</b> is aangehouden, want dat staat écht op je afschrift. Klopt dat niet, pas het dan hieronder aan.`;
+            if (st.bruto != null && Math.abs(pdfTotaal - st.bruto) > 0.02) {
+              // Bankbedrag aanhouden en opnieuw splitsen volgens het gekozen regime.
+              st.bedrag = String(exclVanBruto(st.bruto, st.pct));
+              st.valutaTip = `De factuur vermeldt <b>${esc(d.valuta || '')} ${pdfTotaal.toFixed(2)}</b>, maar er is <b>${euro(st.bruto)}</b> van je rekening afgeschreven${vreemd ? ` — de factuur staat in <b>${esc(d.valuta)}</b>` : ''}. Het <b>bankbedrag</b> is aangehouden, want dat staat écht op je afschrift. Klopt dat niet, pas het dan hieronder aan.`;
             } else if (vreemd) {
               // Losse factuur zonder bankregel: we hebben geen eurobedrag om op terug
               // te vallen, dus alleen waarschuwen. Blind overnemen zet een dollarbedrag
@@ -1961,8 +2029,9 @@
             } else {
               st.bedrag = String(pdfExcl);
             }
+          } else if (st.bruto != null) {
+            st.bedrag = String(exclVanBruto(st.bruto, st.pct));
           }
-          if (d.btwPercentage != null && st.pct !== 'geen') st.pct = String(d.btwPercentage);
           // Kosten-/omzetrekening en betaalrekening voorstellen op basis van de leverancier
           // op de factuur. Een keuze die al vaststaat (leverancier-instelling, of de bank
           // waar de bankregel vandaan komt) laten we met rust.
@@ -1980,7 +2049,9 @@
       if (!st.omschrijving.trim()) return toast('Vul een omschrijving in', 'error');
       if (!st.grootboek || !st.betaal) return toast('Kies de rekeningen', 'error');
       try {
-        const r = await api('boeking', { datum: st.datum, omschrijving: st.omschrijving, factuurNummer: st.factuurNummer, type: st.type, bedragExBTW: excl, btwPercentage: st.pct, grootboekrekening: st.grootboek, betaalRekening: st.betaal, btwPeriode: st.pct === 'geen' ? '' : st.btwPeriode }, 'POST');
+        // verwachtTotaal = het afgeschreven bedrag. De server weigert een post
+        // waarvan de bankregel daar niet aan gelijk is.
+        const r = await api('boeking', { datum: st.datum, omschrijving: st.omschrijving, factuurNummer: st.factuurNummer, type: st.type, bedragExBTW: excl, btwPercentage: st.pct, grootboekrekening: st.grootboek, betaalRekening: st.betaal, btwPeriode: st.pct === 'geen' ? '' : st.btwPeriode, verwachtTotaal: st.bruto != null ? st.bruto : '' }, 'POST');
         toast('Boeking opgeslagen ✓'); close();
         if (opts.onSaved) await opts.onSaved(r.id); else renderRoute();
       } catch (e) { toast(e.message, 'error'); }

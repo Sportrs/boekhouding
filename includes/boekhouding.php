@@ -7,6 +7,11 @@
  *    passief/opbrengsten:  opening + Σcredit − Σdebet
  * ===================================================================== */
 
+// Bedrag in euro's voor in een foutmelding: "€ 9,02".
+function bh_bedrag(float $n): string {
+    return "\u{20AC} " . number_format($n, 2, ',', '.');
+}
+
 // Systeemrekeningen borgen (niet verwijderbaar).
 function bh_ensure_systeem(): void {
     $rekeningen = [

@@ -189,14 +189,48 @@ switch ($actie) {
             json_response(['fout' => 'De BTW-periode mag niet vóór de boekingsdatum liggen'], 422);
         }
 
-        $check = db()->prepare("SELECT COUNT(*) FROM rekeningen WHERE nummer IN (:a, :b)");
+        $check = db()->prepare("SELECT nummer, type FROM rekeningen WHERE nummer IN (:a, :b)");
         $check->execute([':a' => $grootboek, ':b' => $betaal]);
-        if ((int) $check->fetchColumn() !== 2) json_response(['fout' => 'Onbekende grootboek- of betaalrekening'], 422);
+        $soorten = [];
+        foreach ($check->fetchAll() as $rij) $soorten[(string) $rij['nummer']] = (string) $rij['type'];
+        if (!isset($soorten[$grootboek], $soorten[$betaal])) json_response(['fout' => 'Onbekende grootboek- of betaalrekening'], 422);
+        if ($grootboek === $betaal) json_response(['fout' => 'Grootboek- en betaalrekening mogen niet dezelfde zijn'], 422);
+        // Een inkoop hoort op een kostenrekening en een verkoop op een opbrengstenrekening.
+        // Zonder deze controle belandt een hostingfactuur zomaar op bv. "rentebaten".
+        $soortNodig = $type === 'inkoop' ? 'kosten' : 'opbrengsten';
+        if ($soorten[$grootboek] !== $soortNodig) {
+            json_response(['fout' => sprintf(
+                'Rekening %s is een %s-rekening; een %sfactuur hoort op een %srekening.',
+                $grootboek, $soorten[$grootboek], $type, $soortNodig
+            )], 422);
+        }
 
         $btwBedrag = $geenBtw ? 0.0 : centen($excl * $pct / 100);
         // Bij verlegde BTW betaalt de bank alleen het excl-bedrag (BTW saldeert intern).
         $totaal    = centen($excl + ($verlegd ? 0.0 : $btwBedrag));
         $btwCode   = $geenBtw ? null : (string) $pct;
+
+        // Komt deze boeking van een bankregel, dan is het afgeschreven bedrag leidend:
+        // de bankregel in de journaalpost moet daar exact aan gelijk zijn, anders loopt
+        // het grootboeksaldo van de bank per boeking scheef.
+        $verwacht = isset($in['verwachtTotaal']) && $in['verwachtTotaal'] !== '' ? centen((float) $in['verwachtTotaal']) : null;
+        if ($verwacht !== null) {
+            // Een brutobedrag splitsen loopt soms een cent mis (9,02 bij 21% wordt
+            // 7,45 + 1,56 = 9,01). Die cent hoort in de BTW-regel, niet in het banksaldo.
+            $cent = centen($verwacht - $totaal);
+            if (!$verlegd && !$geenBtw && $pct > 0 && abs($cent) <= 0.01 && $btwBedrag + $cent >= 0) {
+                $btwBedrag = centen($btwBedrag + $cent);
+                $totaal    = centen($excl + $btwBedrag);
+            }
+            if (abs(centen($verwacht - $totaal)) >= 0.005) {
+                json_response(['fout' => sprintf(
+                    'Er is %s van de rekening gegaan, maar deze boeking komt uit op %s. '
+                    . 'Bij "geen (buitenland)", 0%% en verlegd is het bedrag excl. BTW gelijk aan het bankbedrag; '
+                    . 'alleen bij 21%% of 9%% NL-BTW splits je de BTW eruit.',
+                    bh_bedrag($verwacht), bh_bedrag($totaal)
+                )], 422);
+            }
+        }
 
         $btwVoor   = bh_instelling('btw_voorbelasting', '1810');   // te vorderen BTW (voorbelasting)
         $btwVersch = bh_instelling('btw_verschuldigd', '1910');    // af te dragen BTW
@@ -219,6 +253,14 @@ switch ($actie) {
             $regels[] = [$grootboek, 0, $excl];
             if ($geenBtw || $verlegd) { $btwBedrag = 0.0; $btwCode = null; $richting = null; }
             else { if ($btwBedrag > 0) $regels[] = [$btwVersch, 0, $btwBedrag]; $richting = 'afdracht'; }
+        }
+
+        // Een journaalpost is per definitie in balans. Kan niet misgaan, dus hard afvangen:
+        // een stille scheefloper hier is een grootboek dat niet meer klopt.
+        $somDebet = 0.0; $somCredit = 0.0;
+        foreach ($regels as [, $d, $c]) { $somDebet += centen((float) $d); $somCredit += centen((float) $c); }
+        if (abs(centen($somDebet) - centen($somCredit)) >= 0.005) {
+            json_response(['fout' => 'Interne fout: debet en credit van deze boeking lopen niet gelijk'], 500);
         }
 
         db()->beginTransaction();
