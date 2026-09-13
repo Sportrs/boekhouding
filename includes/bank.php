@@ -342,17 +342,19 @@ function bank_rekening_voor_iban(?string $iban): ?array {
 /* Saldo zoals het grootboek het op $datum kent: van één rekening, of van alle
    bank-/kasrekeningen samen als er geen rekening is meegegeven. */
 function bank_grootboeksaldo_op(string $datum, ?string $rekening = null): float {
-    $waar = $rekening !== null ? 'k.nummer = :rek' : 'k.is_bank = 1';
+    // Twee losse placeholders: dezelfde named parameter twee keer gebruiken mag niet.
+    $waarOpening = $rekening !== null ? 'k.nummer = :rek1' : 'k.is_bank = 1';
+    $waarRegels  = $rekening !== null ? 'k.nummer = :rek2' : 'k.is_bank = 1';
     $q = db()->prepare(
-        "SELECT COALESCE((SELECT SUM(k.opening_saldo) FROM rekeningen k WHERE $waar), 0)
+        "SELECT COALESCE((SELECT SUM(k.opening_saldo) FROM rekeningen k WHERE $waarOpening), 0)
               + COALESCE((SELECT SUM(r.debet - r.credit)
                             FROM transactie_regels r
                             JOIN transacties t  ON t.id = r.transactie_id
-                            JOIN rekeningen  k  ON k.nummer = r.rekening AND $waar
+                            JOIN rekeningen  k  ON k.nummer = r.rekening AND $waarRegels
                            WHERE t.datum <= :d), 0) AS saldo"
     );
     $par = [':d' => $datum];
-    if ($rekening !== null) $par[':rek'] = $rekening;
+    if ($rekening !== null) { $par[':rek1'] = $rekening; $par[':rek2'] = $rekening; }
     $q->execute($par);
     return centen((float) $q->fetchColumn());
 }
