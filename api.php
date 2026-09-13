@@ -283,7 +283,14 @@ switch ($actie) {
 
     case 'transactie_verwijder': {
         $id = (int) ($in['id'] ?? 0);
+        db()->beginTransaction();
+        // Een gekoppelde bankregel wijst naar deze boeking zonder foreign key. Laat je
+        // die staan, dan blijft de regel "gekoppeld" aan iets dat niet meer bestaat en
+        // kun je hem niet opnieuw boeken. Dus eerst losmaken, dan pas verwijderen.
+        db()->prepare("UPDATE banktransacties SET transactie_id = NULL, status = 'open' WHERE transactie_id = :id")
+            ->execute([':id' => $id]);
         db()->prepare("DELETE FROM transacties WHERE id = :id")->execute([':id' => $id]);
+        db()->commit();
         json_response(['ok' => true]);
     }
 
