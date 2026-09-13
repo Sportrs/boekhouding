@@ -313,12 +313,13 @@
     async function load() {
       let tx;
       try { tx = await api('transacties', { from: st.from, to: st.to }); } catch (e) { return `<div class="dan">${esc(e.message)}</div>`; }
+      st.tx = tx;   // bewaren, zodat het verwijderen weet wat voor boeking het is
       const rows = tx.length ? tx.map((t) => {
         const incl = t.regels.reduce((s, r) => s + Number(r.debet), 0);
         return `<tr>
           <td class="num" style="text-align:left">${datumNL(t.datum)}</td>
           <td class="mut">${esc(t.factuurNummer || '—')}</td>
-          <td>${esc(t.omschrijving)}</td>
+          <td>${esc(t.omschrijving)}${t.uitOverdracht ? ' <span class="badge" data-tip="Uit de overdracht van je boekhouder — verwijderen kan niet ongedaan worden gemaakt">overdracht</span>' : ''}</td>
           <td class="num">${t.btwGrondslag != null ? euro(t.btwGrondslag) : '—'}</td>
           <td class="num">${t.btwBedrag != null ? euro(t.btwBedrag) : '—'}</td>
           <td class="num" style="color:var(--ink)">${euro(incl)}</td>
@@ -344,7 +345,13 @@
       const wis = document.getElementById('wis');
       if (wis) wis.addEventListener('click', () => { st.from = ''; st.to = ''; rerender(); });
       view.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
-        if (!confirm('Deze boeking verwijderen?')) return;
+        // Een post uit de overdracht is onvervangbaar: opnieuw importeren wist eerst
+        // alle rekeningen, boekingen én bankregels, dus ook je eigen werk.
+        const tx = (st.tx || []).find((x) => x.id === Number(b.dataset.del));
+        const waarschuwing = tx && tx.uitOverdracht
+          ? 'LET OP: deze boeking komt uit de overdracht van je boekhouder, niet uit je eigen werk.\n\nVerwijderen kun je niet ongedaan maken \u2014 opnieuw importeren wist eerst je hele administratie, inclusief alles wat je zelf hebt geboekt. Je grootboek wijkt daarna af van de cijfers van je boekhouder.\n\nToch verwijderen?'
+          : 'Deze boeking verwijderen?';
+        if (!confirm(waarschuwing)) return;
         try { await api('transactie_verwijder', { id: Number(b.dataset.del) }, 'POST'); toast('Boeking verwijderd'); rerender(); }
         catch (e) { toast(e.message, 'error'); }
       }));

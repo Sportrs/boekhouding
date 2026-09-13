@@ -97,6 +97,16 @@ function bh_transacties(?string $from = null, ?string $to = null): array {
 
     $ids = array_column($tx, 'id');
     $in  = implode(',', array_fill(0, count($ids), '?'));
+    // Welke boekingen komen uit de overdracht van de boekhouder? Die hebben geen
+    // BTW-kenmerken (die vult alleen je eigen factuurboeking), hangen aan geen
+    // enkele bankregel, en liggen vóór de eerste dag waarover je een afschrift hebt
+    // ingelezen. Ze zijn onvervangbaar: opnieuw importeren wist eerst álles, dus
+    // ook je eigen boekingen en je bankregels.
+    $eersteBank = (string) (db()->query("SELECT MIN(datum) FROM banktransacties")->fetchColumn() ?: '');
+    $gekoppeld = [];
+    foreach (db()->query("SELECT transactie_id FROM banktransacties WHERE transactie_id IS NOT NULL")->fetchAll() as $r) {
+        $gekoppeld[(int) $r['transactie_id']] = true;
+    }
     $rq  = db()->prepare("SELECT transactie_id, rekening, debet, credit FROM transactie_regels WHERE transactie_id IN ($in)");
     $rq->execute($ids);
     $regelsPer = [];
@@ -120,6 +130,8 @@ function bh_transacties(?string $from = null, ?string $to = null): array {
         $t['btwPeriode']    = $t['btw_periode'] ?: null;
         $t['btwDatum']      = $t['btw_periode'] ?: $t['datum'];
         $t['regels']        = $regelsPer[$t['id']] ?? [];
+        $t['uitOverdracht']  = $t['btwGrondslag'] === null && !isset($gekoppeld[$t['id']])
+            && $eersteBank !== '' && $t['datum'] < $eersteBank;
         unset($t['factuur_nummer'], $t['btw_grondslag'], $t['btw_bedrag'], $t['btw_code'], $t['btw_richting'], $t['btw_periode']);
     }
     return $tx;
