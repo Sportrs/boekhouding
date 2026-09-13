@@ -294,21 +294,24 @@ function bank_afschriften_aansluiting(): array {
     $uit = [];
     $vorigeTot = null;
     foreach ($rows as $r) {
+        // Het afschrift gaat over één rekening; vergelijk dan ook met één rekening.
+        $rek = bank_rekening_voor_iban($r['iban']);
+        $nr = $rek['nummer'] ?? null;
         $a = [
-            'iban' => $r['iban'], 'van' => $r['van'], 'tot' => $r['tot'],
+            'iban' => $r['iban'], 'van' => $r['van'], 'tot' => $r['tot'], 'rekening' => $rek,
             'beginsaldo' => $r['beginsaldo'] !== null ? (float) $r['beginsaldo'] : null,
             'eindsaldo'  => $r['eindsaldo']  !== null ? (float) $r['eindsaldo']  : null,
             'gatDavor'   => null,
         ];
         if ($a['eindsaldo'] !== null) {
-            $a['grootboekTot'] = bank_grootboeksaldo_op((string) $r['tot']);
+            $a['grootboekTot'] = bank_grootboeksaldo_op((string) $r['tot'], $nr);
             $a['verschilEind'] = centen($a['eindsaldo'] - $a['grootboekTot']);
         }
         if ($a['beginsaldo'] !== null && $r['van']) {
             // Het beginsaldo geldt aan het begin van de eerste dag, dus vergelijken
             // met het grootboek aan het eind van de dag ervóór.
             $a['voorVan'] = date('Y-m-d', strtotime((string) $r['van'] . ' -1 day'));
-            $a['grootboekVan'] = bank_grootboeksaldo_op($a['voorVan']);
+            $a['grootboekVan'] = bank_grootboeksaldo_op($a['voorVan'], $nr);
             $a['verschilBegin'] = centen($a['beginsaldo'] - $a['grootboekVan']);
         }
         // Sluiten twee afschriften niet op elkaar aan, dan mist er een bestand.
@@ -321,17 +324,36 @@ function bank_afschriften_aansluiting(): array {
     return $uit;
 }
 
-/* Saldo van alle bank-/kasrekeningen zoals het grootboek het op $datum kent. */
-function bank_grootboeksaldo_op(string $datum): float {
+/* Bij welke grootboekrekening hoort dit IBAN? De rekeningnaam bevat het meestal
+   ("1102 — NL85 BUNQ 2175 5032 83"), al dan niet met spaties. Zonder match kunnen
+   we een afschrift niet aan één rekening toewijzen en zegt de vergelijking niets:
+   het eindsaldo van één rekening naast het saldo van álle bankrekeningen leggen
+   levert een verschil op dat er niet is. */
+function bank_rekening_voor_iban(?string $iban): ?array {
+    $norm = static fn($t) => strtoupper(preg_replace('/[^A-Za-z0-9]/', '', (string) $t));
+    $doel = $norm($iban);
+    if ($doel === '') return null;
+    foreach (db()->query("SELECT nummer, naam FROM rekeningen WHERE is_bank = 1 ORDER BY nummer")->fetchAll() as $r) {
+        if (str_contains($norm($r['naam']), $doel)) return ['nummer' => (string) $r['nummer'], 'naam' => (string) $r['naam']];
+    }
+    return null;
+}
+
+/* Saldo zoals het grootboek het op $datum kent: van één rekening, of van alle
+   bank-/kasrekeningen samen als er geen rekening is meegegeven. */
+function bank_grootboeksaldo_op(string $datum, ?string $rekening = null): float {
+    $waar = $rekening !== null ? 'k.nummer = :rek' : 'k.is_bank = 1';
     $q = db()->prepare(
-        "SELECT COALESCE((SELECT SUM(k.opening_saldo) FROM rekeningen k WHERE k.is_bank = 1), 0)
+        "SELECT COALESCE((SELECT SUM(k.opening_saldo) FROM rekeningen k WHERE $waar), 0)
               + COALESCE((SELECT SUM(r.debet - r.credit)
                             FROM transactie_regels r
                             JOIN transacties t  ON t.id = r.transactie_id
-                            JOIN rekeningen  k  ON k.nummer = r.rekening AND k.is_bank = 1
+                            JOIN rekeningen  k  ON k.nummer = r.rekening AND $waar
                            WHERE t.datum <= :d), 0) AS saldo"
     );
-    $q->execute([':d' => $datum]);
+    $par = [':d' => $datum];
+    if ($rekening !== null) $par[':rek'] = $rekening;
+    $q->execute($par);
     return centen((float) $q->fetchColumn());
 }
 

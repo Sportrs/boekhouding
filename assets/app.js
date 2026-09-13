@@ -485,10 +485,11 @@
           ? `<tr><td colspan="2" style="padding:10px 0 2px;font-size:12px;line-height:1.4;color:var(--danger)">\u26A0 Geen afschrift ingelezen over ${datumNL(a.gatDavor.van)} t/m ${datumNL(a.gatDavor.tot)} \u2014 wat daar bewoog kent je administratie niet.</td></tr>`
           : '')
         + `<tr><td colspan="2" style="padding:12px 0 2px"><span class="mut" style="font-size:12px">afschrift${a.iban ? ' \u00B7 ' + esc(a.iban) : ''} ${a.van ? datumNL(a.van) : ''} t/m ${datumNL(a.tot)}</span></td></tr>`
+        + (a.rekening ? '' : `<tr><td colspan="2" style="padding:2px 0 4px;font-size:12px;line-height:1.4;color:var(--danger)">\u26A0 Dit IBAN hoort bij geen enkele bankrekening in je schema, dus wordt hieronder het saldo van <b>alle</b> bankrekeningen samen gebruikt \u2014 dat vergelijkt appels met peren. Zet het IBAN in de naam van de juiste rekening (Grootboek \u2192 rekening bewerken).</td></tr>`)
         + (a.beginsaldo != null ? rij_('beginsaldo volgens afschrift', a.beginsaldo, { sterk: true })
-            + rij_(`grootboek op ${datumNL(a.voorVan)}`, a.grootboekVan, { in: true }) + oordeel(a.verschilBegin, 'begin') : '')
+            + rij_(`grootboek ${a.rekening ? esc(a.rekening.nummer) : 'alle bankrekeningen'} op ${datumNL(a.voorVan)}`, a.grootboekVan, { in: true }) + oordeel(a.verschilBegin, 'begin') : '')
         + (a.eindsaldo != null ? rij_('eindsaldo volgens afschrift', a.eindsaldo, { sterk: true })
-            + rij_(`grootboek op ${datumNL(a.tot)}`, a.grootboekTot, { in: true }) + oordeel(a.verschilEind, 'eind') : '')).join('');
+            + rij_(`grootboek ${a.rekening ? esc(a.rekening.nummer) : 'alle bankrekeningen'} op ${datumNL(a.tot)}`, a.grootboekTot, { in: true }) + oordeel(a.verschilEind, 'eind') : '')).join('');
       const eersteScheef = afs.find((a) => !klopt(a.verschilBegin) && a.verschilBegin != null);
       const uitleg = !af
         ? `Importeer een <b style="color:var(--inkdim)">MT940 (.sta)</b> om dit hard te controleren: zo'n bestand draagt zijn eigen begin- en eindsaldo, en die legt de app naast je grootboek. Een ING-CSV bevat geen saldi. Zie je deze regel na een MT940-import nog steeds, draai dan <b style="color:var(--inkdim)">migraties/012_bank_afschriften.sql</b>.`
