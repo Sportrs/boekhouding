@@ -1385,18 +1385,21 @@
     try { posten = await api('prive_posten'); } catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
     const soortLbl = (s) => s === 'vordering' ? '<span class="suc">te ontvangen</span>' : '<span class="dan">te betalen</span>';
     view.innerHTML = pageHead('Te ontvangen / betalen', 'Openstaande bedragen die je nog krijgt of moet betalen.', `<button class="btn btn-brand" id="nieuwPost">+ Post</button>`) +
-      `<div class="help" style="margin-bottom:16px">Leg vast wat je nog moet <b>ontvangen</b> (bv. een lening die je hebt gegeven) of <b>betalen</b> (bv. een lening/schuld). <b>Open</b> posten tellen mee in je vermogen; is het afgelost, zet je 'm op afgehandeld.</div>
+      `<div class="help" style="margin-bottom:16px">Leg vast wat je nog moet <b>ontvangen</b> (bv. een lening die je hebt gegeven) of <b>betalen</b> (bv. een lening/schuld). <b>Open</b> posten tellen mee in je vermogen; is het afgelost, zet je 'm op afgehandeld. Je niet-uitbetaalde <b>declaraties</b> staan er automatisch bij \u2014 die regel rekent live mee vanuit de Declaraties-pagina, dus je hoeft hem hier niet bij te houden.</div>
         <div class="card"><table class="compact"><thead><tr><th>Naam</th><th>Tegenpartij</th><th>Soort</th><th class="r">Bedrag</th><th>Vervalt</th><th>Status</th><th></th></tr></thead><tbody>
         ${posten.length ? posten.map((p) => `<tr style="${p.status === 'afgehandeld' ? 'opacity:.55' : ''}">
-          <td style="color:var(--ink)">${esc(p.naam)}${p.toelichting ? `<div class="mut" style="font-size:12px">${esc(p.toelichting)}</div>` : ''}</td>
+          <td style="color:var(--ink)">${esc(p.naam)}${p.automatisch ? ' <span class="badge" style="color:var(--brand)">automatisch</span>' : ''}${p.toelichting ? `<div class="mut" style="font-size:12px">${esc(p.toelichting)}</div>` : ''}</td>
           <td class="mut">${esc(p.tegenpartij || '')}</td>
           <td>${soortLbl(p.soort)}</td>
           <td class="num" style="color:var(--ink)">${euro(p.bedrag)}</td>
           <td class="mut">${p.vervaldatum ? datumNL(p.vervaldatum) : ''}</td>
           <td>${p.status === 'open' ? '<span class="badge" style="color:var(--warning)">open</span>' : '<span class="badge">afgehandeld</span>'}</td>
-          <td class="r" style="white-space:nowrap">${p.status === 'open' ? `<button class="linkbtn" data-af="${p.id}">afhandelen</button> ` : `<button class="linkbtn" data-her="${p.id}">heropenen</button> `}<button class="linkbtn" data-edit="${p.id}">✎</button> <button class="linkbtn del" data-del="${p.id}">✕</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">Nog geen posten.</td></tr>'}
+          <td class="r" style="white-space:nowrap">${p.automatisch
+            ? '<button class="linkbtn" data-naar-decl="1">bijwerken in Declaraties \u2192</button>'
+            : `${p.status === 'open' ? `<button class="linkbtn" data-af="${p.id}">afhandelen</button> ` : `<button class="linkbtn" data-her="${p.id}">heropenen</button> `}<button class="linkbtn" data-edit="${p.id}">\u270E</button> <button class="linkbtn del" data-del="${p.id}">\u2715</button>`}</td></tr>`).join('') : '<tr><td colspan="7" class="empty">Nog geen posten.</td></tr>'}
         </tbody></table></div>`;
     document.getElementById('nieuwPost').onclick = () => openPrivePost(null, laad);
+    view.querySelectorAll('[data-naar-decl]').forEach((b) => b.onclick = () => { location.hash = '#/prive/declaraties'; });
     view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPrivePost(posten.find((x) => x.id === Number(b.dataset.edit)), laad));
     view.querySelectorAll('[data-af]').forEach((b) => b.onclick = async () => { await api('prive_post_status', { id: Number(b.dataset.af), status: 'afgehandeld' }, 'POST'); laad(); });
     view.querySelectorAll('[data-her]').forEach((b) => b.onclick = async () => { await api('prive_post_status', { id: Number(b.dataset.her), status: 'open' }, 'POST'); laad(); });

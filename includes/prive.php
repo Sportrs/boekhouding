@@ -372,7 +372,21 @@ function prive_bank_import(int $rekeningId, string $inhoud): array {
 // --- Te ontvangen / te betalen (register) ----------------------------
 function prive_posten_lijst(): array {
     $rows = db()->query("SELECT * FROM prive_posten ORDER BY (status='open') DESC, vervaldatum IS NULL, vervaldatum, naam")->fetchAll();
-    foreach ($rows as &$r) { $r['id'] = (int) $r['id']; $r['bedrag'] = (float) $r['bedrag']; }
+    foreach ($rows as &$r) { $r['id'] = (int) $r['id']; $r['bedrag'] = (float) $r['bedrag']; $r['automatisch'] = false; }
+    unset($r);
+    // Niet uitbetaalde declaraties zijn ook geld dat je nog krijgt, dus horen ze in
+    // dit overzicht. Niet als losse post die je zelf moet bijhouden — dan loopt hij
+    // gegarandeerd achter op de Declaraties-pagina — maar als regel die live wordt
+    // berekend. Daarom id 0: hij valt niet te bewerken of te verwijderen.
+    $decl = prive_declaraties_openstaand();
+    if (abs($decl) >= 0.005) {
+        array_unshift($rows, [
+            'id' => 0, 'naam' => 'Declaraties bij werkgever', 'soort' => 'vordering',
+            'bedrag' => $decl, 'tegenpartij' => null, 'datum' => null, 'vervaldatum' => null,
+            'status' => 'open', 'toelichting' => 'Ingevoerd en ingediend, nog niet uitbetaald',
+            'aangemaakt_op' => null, 'automatisch' => true,
+        ]);
+    }
     return $rows;
 }
 
@@ -435,6 +449,10 @@ function prive_overzicht(string $from, string $to): array {
     foreach ($rek as $r) $totRek += $r['aandeelSaldo'];   // jouw aandeel per rekening
     $vord = (float) db()->query("SELECT COALESCE(SUM(bedrag),0) FROM prive_posten WHERE soort='vordering' AND status='open'")->fetchColumn();
     $schuld = (float) db()->query("SELECT COALESCE(SUM(bedrag),0) FROM prive_posten WHERE soort='schuld' AND status='open'")->fetchColumn();
+    // Niet uitbetaalde declaraties zijn net zo goed een vordering; zonder deze regel
+    // zou "nog te ontvangen" hier iets anders zeggen dan de postenpagina.
+    $declOpen = prive_declaraties_openstaand();
+    $vord += $declOpen;
 
     // Bedragen wegen we naar het aandeel van de rekening (gedeelde rekening telt half).
     // Neutrale categorieën (overboekingen) tellen NIET mee als inkomst/uitgave.
@@ -474,6 +492,7 @@ function prive_overzicht(string $from, string $to): array {
         'vermogen'    => centen($totRek + $vord - $schuld),
         'totRekeningen' => centen($totRek),
         'vorderingen' => centen($vord),
+        'vorderingenDeclaraties' => centen($declOpen),
         'schulden'    => centen($schuld),
         'rekeningen'  => $rek,
         'inkomsten'   => centen($inkomsten),
@@ -660,6 +679,18 @@ function prive_declaratie_opslaan(array $in): array {
         $id = (int) db()->lastInsertId();
     }
     return ['ok' => true, 'id' => $id, 'bedrag' => $bedrag];
+}
+
+/* Nog niet uitbetaalde declaraties (nieuw + gedeclareerd). Dat is een vordering op
+   je werkgever, dus het telt mee bij "nog te ontvangen" en in je vermogen. */
+function prive_declaraties_openstaand(): float {
+    try {
+        return centen((float) db()->query(
+            "SELECT COALESCE(SUM(bedrag),0) FROM prive_declaraties WHERE status <> 'betaald'"
+        )->fetchColumn());
+    } catch (PDOException $e) {
+        return 0.0;   // migratie 013 nog niet gedraaid
+    }
 }
 
 function prive_declaratie_status(int $id, string $status): void {
