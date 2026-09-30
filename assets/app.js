@@ -147,6 +147,7 @@
     { hash: '#/prive/transacties', label: 'Transacties', ic: '≣', page: privTransacties },
     { hash: '#/prive/maand', label: 'Per maand', ic: '▦', page: privMaand },
     { hash: '#/prive/posten', label: 'Te ontvangen / betalen', ic: '◈', page: privPosten },
+    { hash: '#/prive/declaraties', label: 'Declaraties', ic: '▩', page: privDeclaraties },
     { hash: '#/prive/categorieen', label: 'Categorieën', ic: '☰', page: privCategorieen },
   ];
   const currentRoutes = () => (state.mode === 'prive' ? PRIVE_ROUTES : GIBS_ROUTES);
@@ -1085,6 +1086,12 @@
 
   // ---------------- Pagina: Privé (persoonlijke boekhouding) ----------------
   const PRIVE_REK_SOORT = { bank: 'Betaalrekening', spaar: 'Spaarrekening', contant: 'Contant', bezitting: 'Bezitting', overig: 'Overig' };
+  const PRIVE_DECL_TYPE = { kilometers: 'kilometers', parkeren: 'parkeerkosten', overig: 'overig' };
+  const PRIVE_DECL_STATUS = {
+    nieuw: '<span class="badge" style="color:var(--warning)">nieuw</span>',
+    gedeclareerd: '<span class="badge" style="color:var(--brand)">gedeclareerd</span>',
+    betaald: '<span class="badge" style="color:var(--success)">betaald</span>',
+  };
   const PRIVE_CAT_SOORT = { inkomst: '<span class="suc">inkomst</span>', uitgave: '<span class="mut">uitgave</span>', neutraal: '<span class="warn">neutraal (overboeking)</span>' };
   let priveJaar = new Date().getFullYear();
   let priveMaandModus = 'jaar';
@@ -1394,6 +1401,135 @@
     view.querySelectorAll('[data-af]').forEach((b) => b.onclick = async () => { await api('prive_post_status', { id: Number(b.dataset.af), status: 'afgehandeld' }, 'POST'); laad(); });
     view.querySelectorAll('[data-her]').forEach((b) => b.onclick = async () => { await api('prive_post_status', { id: Number(b.dataset.her), status: 'open' }, 'POST'); laad(); });
     view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => { if (!confirm('Post verwijderen?')) return; await api('prive_post_verwijder', { id: Number(b.dataset.del) }, 'POST'); laad(); });
+  }
+
+  /* ---------------- Pagina: Declaraties (privé) ----------------
+     Kilometers en onkosten die je bij je werkgever indient. Bij type "kilometers"
+     rekent de server het bedrag uit km × de ingestelde vergoeding, en legt het
+     resultaat vast met het tarief van dat moment: pas je de vergoeding later aan,
+     dan mogen al ingediende declaraties niet meeveranderen. */
+  const declTarief = (t) => '€ ' + t.toFixed(3).replace(/0$/, '').replace('.', ',');
+  const declKm = (km) => km.toFixed(1).replace('.', ',') + ' km';
+  let declFilter = 'alles';
+
+  async function privDeclaraties(view) {
+    const laad = () => privDeclaraties(view);
+    let d;
+    try { d = await api('prive_declaraties', declFilter === 'alles' ? {} : { status: declFilter }); }
+    catch (e) { view.innerHTML = `<div class="dan">${esc(e.message)}</div>`; return; }
+
+    const acties = (r) => {
+      const knop = r.status === 'nieuw' ? `<button class="linkbtn" data-status="gedeclareerd" data-id="${r.id}">declareren</button> `
+        : r.status === 'gedeclareerd' ? `<button class="linkbtn" data-status="betaald" data-id="${r.id}">betaald</button> `
+        : `<button class="linkbtn" data-status="gedeclareerd" data-id="${r.id}">terug</button> `;
+      return knop + `<button class="linkbtn" data-edit="${r.id}">✎</button> <button class="linkbtn del" data-del="${r.id}">✕</button>`;
+    };
+    const rows = d.regels.length ? d.regels.map((r) => `<tr style="${r.status === 'betaald' ? 'opacity:.55' : ''}">
+        <td class="num" style="text-align:left">${datumNL(r.datum)}</td>
+        <td>${esc(PRIVE_DECL_TYPE[r.type] || r.type)}</td>
+        <td style="color:var(--ink)">${esc(r.omschrijving)}</td>
+        <td class="num mut">${r.km != null ? declKm(r.km) : ''}</td>
+        <td class="num" style="color:var(--ink)"${r.km != null && r.km_tarief != null ? ` data-tip="${declKm(r.km)} × ${declTarief(r.km_tarief)}"` : ''}>${euro(r.bedrag)}</td>
+        <td>${PRIVE_DECL_STATUS[r.status] || esc(r.status)}</td>
+        <td class="r" style="white-space:nowrap">${acties(r)}</td></tr>`).join('')
+      : `<tr><td colspan="7" class="empty">${declFilter === 'alles' ? 'Nog geen declaraties — voeg je eerste rit of bonnetje toe.' : 'Niets met deze status.'}</td></tr>`;
+
+    view.innerHTML = pageHead('Declaraties', 'Kilometers en onkosten die je bij je werkgever indient.',
+        `<button class="btn btn-brand" id="nieuweDecl">+ Declaratie</button>`) +
+      `<div class="help" style="margin-bottom:16px">Houd per dag bij welke kosten je hebt gemaakt en hoe ver ze zijn: <b>nieuw</b> = nog niet ingediend, <b>gedeclareerd</b> = ingediend en wacht op uitbetaling, <b>betaald</b> = binnen. Bij type <b>kilometers</b> vul je alleen de afstand in; het bedrag volgt uit de vergoeding per kilometer hieronder. Dit staat los van je privéboekhouding: de uitbetaling zelf komt straks als gewone bijschrijving in je bankimport.</div>
+        <div class="grid grid-4" style="margin-bottom:16px">
+          ${stat('Nog in te dienen', euro(d.totalen.nieuw), 'warn')}
+          ${stat('Ingediend', euro(d.totalen.gedeclareerd), 'brand')}
+          ${stat('Nog te ontvangen', euro(d.openstaand), 'suc')}
+          ${stat('Uitbetaald', euro(d.totalen.betaald), 'mut')}
+        </div>
+        <div class="card" style="margin-bottom:16px"><div style="padding:16px 20px;display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+          <label class="field" style="max-width:190px;margin:0"><span>Vergoeding per kilometer</span>
+            <input class="num" id="tarief" value="${String(d.tarief).replace('.', ',')}" placeholder="0,23" /></label>
+          <button class="btn btn-ghost" id="tariefOpslaan">Opslaan</button>
+          <div class="mut" style="font-size:12px;line-height:1.5;flex:1;min-width:240px">Geldt voor declaraties die je hierna invoert. Bestaande regels houden het tarief waarmee ze zijn berekend — die zijn immers al ingediend. Nu: <b style="color:var(--inkdim)">${declTarief(d.tarief)}</b> per km.</div>
+        </div></div>
+        <div class="tabs" style="margin-bottom:16px;display:flex;gap:8px">${['alles', 'nieuw', 'gedeclareerd', 'betaald'].map((t) => `<button data-tab="${t}" class="${declFilter === t ? 'active' : ''}">${t}</button>`).join('')}</div>
+        <div class="card"><div style="overflow-x:auto"><table class="compact">
+          <thead><tr><th>Datum</th><th>Type</th><th>Omschrijving</th><th class="r">Afstand</th><th class="r" style="width:92px">Bedrag</th><th>Status</th><th></th></tr></thead>
+          <tbody>${rows}</tbody></table></div></div>`;
+
+    document.getElementById('nieuweDecl').onclick = () => openPriveDeclaratie(null, d.tarief, laad);
+    view.querySelectorAll('[data-tab]').forEach((b) => b.onclick = () => { declFilter = b.dataset.tab; laad(); });
+    view.querySelectorAll('[data-edit]').forEach((b) => b.onclick = () => openPriveDeclaratie(d.regels.find((x) => x.id === Number(b.dataset.edit)), d.tarief, laad));
+    view.querySelectorAll('[data-status]').forEach((b) => b.onclick = async () => {
+      try { await api('prive_declaratie_status', { id: Number(b.dataset.id), status: b.dataset.status }, 'POST'); laad(); }
+      catch (e) { toast(e.message, 'error'); }
+    });
+    view.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
+      if (!confirm('Declaratie verwijderen?')) return;
+      try { await api('prive_declaratie_verwijder', { id: Number(b.dataset.del) }, 'POST'); laad(); }
+      catch (e) { toast(e.message, 'error'); }
+    });
+    document.getElementById('tariefOpslaan').onclick = async () => {
+      try {
+        const r = await api('prive_km_vergoeding_zet', { tarief: document.getElementById('tarief').value }, 'POST');
+        toast(`Vergoeding op ${declTarief(r.tarief)} per km gezet ✓`); laad();
+      } catch (e) { toast(e.message, 'error'); }
+    };
+  }
+
+  function openPriveDeclaratie(decl, tarief, refresh) {
+    const st = {
+      id: decl ? decl.id : 0,
+      datum: decl ? decl.datum : vandaag(),
+      type: decl ? decl.type : 'kilometers',
+      omschrijving: decl ? decl.omschrijving : '',
+      km: decl && decl.km != null ? String(decl.km).replace('.', ',') : '',
+      bedrag: decl && decl.type !== 'kilometers' ? String(decl.bedrag).replace('.', ',') : '',
+      status: decl ? decl.status : 'nieuw',
+    };
+    // Bij bewerken van een bestaande kilometerdeclaratie geldt het tarief van toen,
+    // anders zou het bedrag stilletjes veranderen door een nieuwe instelling.
+    const tariefNu = decl && decl.km_tarief != null ? decl.km_tarief : tarief;
+    const getal = (v) => Number(String(v).replace(',', '.')) || 0;
+    const ov = document.createElement('div'); ov.className = 'overlay'; document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+
+    function render() {
+      const km = getal(st.km);
+      ov.innerHTML = `<div class="modal sm"><div class="modal-head"><h2>${decl ? 'Declaratie bewerken' : 'Nieuwe declaratie'}</h2><button class="x">✕</button></div>
+        <div class="modal-body">
+          <div class="row">
+            <label class="field"><span>Datum</span><input type="date" id="datum" value="${esc(st.datum)}" /></label>
+            <label class="field"><span>Type</span><select id="type">${Object.entries(PRIVE_DECL_TYPE).map(([v, l]) => `<option value="${v}" ${st.type === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          </div>
+          <label class="field"><span>Omschrijving</span><input id="oms" value="${esc(st.omschrijving)}" placeholder="${st.type === 'kilometers' ? 'bijv. Den Haag – Utrecht v.v., klantbezoek' : 'bijv. parkeergarage Utrecht Centraal'}" /></label>
+          ${st.type === 'kilometers'
+            ? `<label class="field"><span>Aantal kilometers</span><input class="num" id="km" value="${esc(st.km)}" placeholder="0,0" /></label>
+               <div class="mut" style="font-size:13px">${km > 0 ? `${declKm(km)} × ${declTarief(tariefNu)} = <b style="color:var(--ink)">${euro(round2(km * tariefNu))}</b>` : `Het bedrag wordt berekend met ${declTarief(tariefNu)} per kilometer.`}</div>`
+            : `<label class="field"><span>Bedrag</span><input class="num" id="bedrag" value="${esc(st.bedrag)}" placeholder="0,00" /></label>`}
+          <label class="field"><span>Status</span><select id="status">${['nieuw', 'gedeclareerd', 'betaald'].map((v) => `<option value="${v}" ${st.status === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+        </div>
+        <div class="modal-foot"><button class="btn btn-ghost" id="annuleer">Annuleren</button><button class="btn btn-brand" id="opslaan">Opslaan</button></div></div>`;
+
+      ov.querySelector('.x').onclick = close;
+      ov.querySelector('#annuleer').onclick = close;
+      const bind = (id, key, herteken) => {
+        const el = ov.querySelector('#' + id); if (!el) return;
+        el.oninput = () => { st[key] = el.value; if (herteken) render(); };
+        el.onchange = el.oninput;
+      };
+      bind('datum', 'datum'); bind('type', 'type', true); bind('oms', 'omschrijving');
+      bind('km', 'km', true); bind('bedrag', 'bedrag'); bind('status', 'status');
+      ov.querySelector('#opslaan').onclick = async () => {
+        if (!st.omschrijving.trim()) return toast('Vul een omschrijving in', 'error');
+        if (st.type === 'kilometers' ? !(getal(st.km) > 0) : !(getal(st.bedrag) > 0)) {
+          return toast(st.type === 'kilometers' ? 'Vul het aantal kilometers in' : 'Vul een bedrag in', 'error');
+        }
+        try {
+          await api('prive_declaratie_opslaan', { id: st.id, datum: st.datum, type: st.type, omschrijving: st.omschrijving, km: st.km, bedrag: st.bedrag, status: st.status }, 'POST');
+          toast('Opgeslagen ✓'); close(); refresh();
+        } catch (e) { toast(e.message, 'error'); }
+      };
+    }
+    render();
   }
 
   async function privCategorieen(view) {

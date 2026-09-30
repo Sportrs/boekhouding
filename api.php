@@ -520,6 +520,25 @@ switch ($actie) {
     case 'prive_transactie_markeer_overboeking':
         json_response(prive_transactie_markeer_overboeking((int) ($in['id'] ?? 0)));
 
+    case 'prive_declaraties': {
+        $status = (string) ($in['status'] ?? '');
+        json_response(prive_declaraties_lijst($status !== '' ? $status : null));
+    }
+
+    case 'prive_declaratie_opslaan':
+        json_response(prive_declaratie_opslaan($in));
+
+    case 'prive_declaratie_status':
+        prive_declaratie_status((int) ($in['id'] ?? 0), (string) ($in['status'] ?? 'nieuw'));
+        json_response(['ok' => true]);
+
+    case 'prive_declaratie_verwijder':
+        prive_declaratie_verwijder((int) ($in['id'] ?? 0));
+        json_response(['ok' => true]);
+
+    case 'prive_km_vergoeding_zet':
+        json_response(['ok' => true, 'tarief' => prive_km_vergoeding_zet((string) ($in['tarief'] ?? ''))]);
+
     case 'prive_posten':
         json_response(prive_posten_lijst());
 

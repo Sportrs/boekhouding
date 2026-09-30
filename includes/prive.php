@@ -544,3 +544,129 @@ function prive_maandcijfers(int $jaar): array {
         'totaalUitgaven'    => centen(array_sum($uit)),
     ];
 }
+
+// --- Declaraties (kilometers en onkosten bij de werkgever) -----------
+
+const PRIVE_DECL_TYPES  = ['kilometers', 'parkeren', 'overig'];
+const PRIVE_DECL_STATUS = ['nieuw', 'gedeclareerd', 'betaald'];
+
+/* Vergoeding per kilometer in euro's. Eén instelling voor de hele lijst; het
+   berekende bedrag wordt per declaratie vastgelegd, zodat een latere wijziging
+   niet door oude (al ingediende) declaraties heen loopt. */
+function prive_km_vergoeding(): float {
+    return prive_tarief((float) str_replace(',', '.', bh_instelling('km_vergoeding', '0.23')));
+}
+
+/* Een kilometervergoeding is geen bedrag maar een tarief: drie decimalen, zodat
+   bv. 0,235 per km niet stilletjes 0,24 wordt. */
+function prive_tarief(float $n): float {
+    return round($n, 3);
+}
+
+function prive_km_vergoeding_zet(string $waarde): float {
+    $v = prive_tarief((float) str_replace(',', '.', $waarde));
+    if ($v < 0 || $v > 10) json_response(['fout' => 'Vergoeding per kilometer moet tussen 0 en 10 euro liggen'], 422);
+    bh_instelling_zet('km_vergoeding', (string) $v);
+    return $v;
+}
+
+function prive_declaraties_lijst(?string $status = null): array {
+    $sql = "SELECT * FROM prive_declaraties";
+    $par = [];
+    if ($status !== null && in_array($status, PRIVE_DECL_STATUS, true)) {
+        $sql .= " WHERE status = :s";
+        $par[':s'] = $status;
+    }
+    $sql .= " ORDER BY datum DESC, id DESC";
+    try {
+        $q = db()->prepare($sql);
+        $q->execute($par);
+        $regels = $q->fetchAll();
+    } catch (PDOException $e) {
+        // Nog niet gemigreerd: zeg wat er moet gebeuren in plaats van een SQL-fout.
+        json_response(['fout' => 'De tabel voor declaraties bestaat nog niet. Draai migraties/013_prive_declaraties.sql via phpMyAdmin.'], 500);
+    }
+    foreach ($regels as &$r) {
+        $r['id'] = (int) $r['id'];
+        $r['bedrag'] = (float) $r['bedrag'];
+        $r['km'] = $r['km'] !== null ? (float) $r['km'] : null;
+        $r['km_tarief'] = $r['km_tarief'] !== null ? (float) $r['km_tarief'] : null;
+    }
+    unset($r);
+
+    // Totalen altijd over álle declaraties, ook als de lijst gefilterd is: je wilt
+    // weten wat er nog te declareren en te ontvangen is, niet wat er in beeld staat.
+    $totalen = array_fill_keys(PRIVE_DECL_STATUS, 0.0);
+    foreach (db()->query("SELECT status, SUM(bedrag) AS som FROM prive_declaraties GROUP BY status")->fetchAll() as $t) {
+        if (isset($totalen[$t['status']])) $totalen[$t['status']] = centen((float) $t['som']);
+    }
+    // Nog niet uitbetaald: nieuw + gedeclareerd.
+    $openstaand = centen($totalen['nieuw'] + $totalen['gedeclareerd']);
+
+    return ['tarief' => prive_km_vergoeding(), 'regels' => $regels, 'totalen' => $totalen, 'openstaand' => $openstaand];
+}
+
+function prive_declaratie_opslaan(array $in): array {
+    $datum = (string) ($in['datum'] ?? '');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $datum)) json_response(['fout' => 'Geldige datum (YYYY-MM-DD) is verplicht'], 422);
+    $type = (string) ($in['type'] ?? 'kilometers');
+    if (!in_array($type, PRIVE_DECL_TYPES, true)) json_response(['fout' => 'Type moet kilometers, parkeren of overig zijn'], 422);
+    $omschrijving = trim((string) ($in['omschrijving'] ?? ''));
+    if ($omschrijving === '') json_response(['fout' => 'Omschrijving is verplicht'], 422);
+    $status = (string) ($in['status'] ?? 'nieuw');
+    if (!in_array($status, PRIVE_DECL_STATUS, true)) $status = 'nieuw';
+
+    $getal = fn($v) => (float) str_replace(',', '.', (string) $v);
+    $id = (int) ($in['id'] ?? 0);
+    if ($type === 'kilometers') {
+        // Bij kilometers rekent de app: het bedrag volgt uit de afstand en het
+        // tarief, zodat een tikfout in het bedrag niet kan bestaan.
+        $km = round($getal($in['km'] ?? 0), 1);
+        if (!($km > 0)) json_response(['fout' => 'Vul het aantal kilometers in (groter dan 0)'], 422);
+        // Een bestaande declaratie houdt het tarief waarmee hij is berekend: die is
+        // al ingediend onder dat tarief, dus een nieuwe instelling mag hem niet
+        // herprijzen. Alleen een nieuwe declaratie pakt de huidige vergoeding.
+        $bestaand = null;
+        if ($id > 0) {
+            $q = db()->prepare("SELECT km_tarief FROM prive_declaraties WHERE id = :id");
+            $q->execute([':id' => $id]);
+            $w = $q->fetchColumn();
+            $bestaand = ($w === false || $w === null) ? null : (float) $w;
+        }
+        $tarief = $bestaand ?? prive_km_vergoeding();
+        $bedrag = centen($km * $tarief);
+    } else {
+        $km = null;
+        $tarief = null;
+        $bedrag = centen($getal($in['bedrag'] ?? 0));
+        if (!($bedrag > 0)) json_response(['fout' => 'Bedrag moet groter dan 0 zijn'], 422);
+    }
+
+    $data = [
+        ':datum' => $datum, ':type' => $type, ':oms' => mb_substr($omschrijving, 0, 255),
+        ':km' => $km, ':tarief' => $tarief, ':bedrag' => $bedrag, ':status' => $status,
+    ];
+    if ($id > 0) {
+        $data[':id'] = $id;
+        db()->prepare(
+            "UPDATE prive_declaraties SET datum=:datum, type=:type, omschrijving=:oms, km=:km,
+                    km_tarief=:tarief, bedrag=:bedrag, status=:status WHERE id=:id"
+        )->execute($data);
+    } else {
+        db()->prepare(
+            "INSERT INTO prive_declaraties (datum, type, omschrijving, km, km_tarief, bedrag, status)
+             VALUES (:datum,:type,:oms,:km,:tarief,:bedrag,:status)"
+        )->execute($data);
+        $id = (int) db()->lastInsertId();
+    }
+    return ['ok' => true, 'id' => $id, 'bedrag' => $bedrag];
+}
+
+function prive_declaratie_status(int $id, string $status): void {
+    if (!in_array($status, PRIVE_DECL_STATUS, true)) json_response(['fout' => 'Onbekende status'], 422);
+    db()->prepare("UPDATE prive_declaraties SET status = :s WHERE id = :id")->execute([':s' => $status, ':id' => $id]);
+}
+
+function prive_declaratie_verwijder(int $id): void {
+    db()->prepare("DELETE FROM prive_declaraties WHERE id = :id")->execute([':id' => $id]);
+}
