@@ -454,7 +454,17 @@
       } else if (/belastingdienst/.test(tekst)) {
         hint = `Betaling aan/van de <b>Belastingdienst</b>. Kies de juiste tegenrekening: <b>${verschLabel}</b> voor omzetbelasting, of een VpB-rekening voor vennootschapsbelasting.`;
       } else {
-        hint = 'Een <b>overboeking</b> is geen kosten/omzet maar een verschuiving. Kies op de lege regel de tegenrekening waar dit geld heen/vandaan ging (bv. een andere bankrekening of de rekening-courant).';
+        // Dit is de tegenhanger van "nog niet betaald" bij het boeken van een factuur:
+        // de factuur staat al op debiteuren/crediteuren, deze bankregel laat die post
+        // leeglopen. Een nieuwe factuur hoort hier juist niet: die gaat via Boek.
+        const openNr = line.afbij === 'af' ? (state.settings || {}).crediteuren : (state.settings || {}).debiteuren;
+        const openAcc = openNr ? acc.find((a) => a.nummer === openNr) : null;
+        if (openAcc) {
+          suggest = openAcc.nummer;
+          hint = `Is dit de <b>betaling van een factuur die je al had geboekt</b> als nog niet betaald? Kies dan <b>${esc(openAcc.nummer)} — ${esc(openAcc.naam)}</b>: die post loopt daarmee leeg (${richting}). Gaat het om een <b>nieuwe factuur</b>, sluit dit venster dan en gebruik <b>Boek</b>, zodat de kosten of omzet en de BTW meegaan. En is het een <b>verschuiving</b> (naar privé, tussen banken), kies dan die tegenrekening.`;
+        } else {
+          hint = 'Een <b>overboeking</b> is geen kosten/omzet maar een verschuiving. Kies op de lege regel de tegenrekening waar dit geld heen/vandaan ging (bv. een andere bankrekening of de rekening-courant).';
+        }
       }
       const oms = line.leverancier_naam || line.tegenrekening_naam || line.omschrijving || 'Overboeking';
       const regels = line.afbij === 'af'
@@ -483,9 +493,13 @@
       const af = afs.length ? afs[afs.length - 1] : null;
       const klopt = (v) => v != null && Math.abs(v) < 0.005;
       const sluitAan = af && klopt(af.verschilEind);
-      const oordeel = (v, wat) => v == null ? '' : `<tr><td colspan="2" style="padding:2px 0 6px;font-size:12px;line-height:1.4;color:var(--${klopt(v) ? 'success' : 'danger'})">${klopt(v)
+      // Zit de afwijking tussen twee punten waar het grootboek wél aansluit, dan is
+      // het een timingverschil: over dat stuk klopt de beweging, er staat alleen iets
+      // op een andere dag. Dat is geel, geen rood — en vraagt een andere actie.
+      const oordeel = (v, wat, timing) => v == null ? '' : `<tr><td colspan="2" style="padding:2px 0 6px;font-size:12px;line-height:1.4;color:var(--${klopt(v) ? 'success' : timing ? 'warning' : 'danger'})">${klopt(v)
         ? '\u2713 ' + wat + ' sluit aan'
-        : '\u26A0 ' + wat + ': verschil ' + euro(Math.abs(v)) + (v > 0 ? ' \u2014 het grootboek kent minder geld dan de bank' : ' \u2014 het grootboek kent meer geld dan de bank')}</td></tr>`;
+        : '\u26A0 ' + wat + ': verschil ' + euro(Math.abs(v)) + (v > 0 ? ' \u2014 het grootboek kent minder geld dan de bank' : ' \u2014 het grootboek kent meer geld dan de bank')
+          + (timing ? ` \u2014 <b>timingverschil</b>, want je grootboek sluit wél aan op ${datumNL(timing.voor)} en op ${datumNL(timing.na)}. Er is niets kwijt of dubbel; een boeking staat op een andere dag dan het geld bewoog.` : '')}</td></tr>`;
       // Per afschrift beide uiteinden. Het beginsaldo is de belangrijkste: klopt dat
       // niet, dan zit het gat vóór dat bestand en heeft zoeken in de regels erna
       // geen zin.
@@ -495,12 +509,17 @@
         + `<tr><td colspan="2" style="padding:12px 0 2px"><span class="mut" style="font-size:12px">afschrift${a.iban ? ' \u00B7 ' + esc(a.iban) : ''} ${a.van ? datumNL(a.van) : ''} t/m ${datumNL(a.tot)}</span></td></tr>`
         + (a.rekening ? '' : `<tr><td colspan="2" style="padding:2px 0 4px;font-size:12px;line-height:1.4;color:var(--danger)">\u26A0 Dit IBAN hoort bij geen enkele bankrekening in je schema, dus wordt hieronder het saldo van <b>alle</b> bankrekeningen samen gebruikt \u2014 dat vergelijkt appels met peren. Zet het IBAN in de naam van de juiste rekening (Grootboek \u2192 rekening bewerken).</td></tr>`)
         + (a.beginsaldo != null ? rij_('beginsaldo volgens afschrift', a.beginsaldo, { sterk: true })
-            + rij_(`grootboek ${a.rekening ? esc(a.rekening.nummer) : 'alle bankrekeningen'} op ${datumNL(a.voorVan)}`, a.grootboekVan, { in: true }) + oordeel(a.verschilBegin, 'begin') : '')
+            + rij_(`grootboek ${a.rekening ? esc(a.rekening.nummer) : 'alle bankrekeningen'} op ${datumNL(a.voorVan)}`, a.grootboekVan, { in: true }) + oordeel(a.verschilBegin, 'begin', a.timingBegin) : '')
         + (a.eindsaldo != null ? rij_('eindsaldo volgens afschrift', a.eindsaldo, { sterk: true })
-            + rij_(`grootboek ${a.rekening ? esc(a.rekening.nummer) : 'alle bankrekeningen'} op ${datumNL(a.tot)}`, a.grootboekTot, { in: true }) + oordeel(a.verschilEind, 'eind') : '')).join('');
-      const eersteScheef = afs.find((a) => !klopt(a.verschilBegin) && a.verschilBegin != null);
+            + rij_(`grootboek ${a.rekening ? esc(a.rekening.nummer) : 'alle bankrekeningen'} op ${datumNL(a.tot)}`, a.grootboekTot, { in: true }) + oordeel(a.verschilEind, 'eind', a.timingEind) : '')).join('');
+      const eersteScheef = afs.find((a) => a.verschilBegin != null && !klopt(a.verschilBegin) && !a.timingBegin);
+      const alleenTiming = afs.some((a) => a.timingBegin || a.timingEind)
+        && !afs.some((a) => (a.verschilBegin != null && !klopt(a.verschilBegin) && !a.timingBegin)
+          || (a.verschilEind != null && !klopt(a.verschilEind) && !a.timingEind));
       const uitleg = !af
         ? `Importeer een <b style="color:var(--inkdim)">MT940 (.sta)</b> om dit hard te controleren: zo'n bestand draagt zijn eigen begin- en eindsaldo, en die legt de app naast je grootboek. Een ING-CSV bevat geen saldi. Zie je deze regel na een MT940-import nog steeds, draai dan <b style="color:var(--inkdim)">migraties/012_bank_afschriften.sql</b>.`
+        : alleenTiming
+          ? `Alle afwijkingen hierboven liggen tussen twee punten waar je grootboek wél aansluit. Over dat hele stuk is de beweging van je grootboek dus gelijk aan die van je bank: <b style="color:var(--inkdim)">er is niets kwijt en niets dubbel</b>. Wat er wel is: een boeking die op een andere dag staat dan het geld bewoog \u2014 bijvoorbeeld een verkoopfactuur die je op factuurdatum boekt terwijl de klant weken later betaalt. Voor je BTW-aangifte maakt dat niets uit (die kijkt naar de factuurdatum), voor je banksaldo per dag wel. De oranje meldingen onder de bankregels wijzen de gevallen aan.`
         : eersteScheef
           ? `Begin bij het <b style="color:var(--inkdim)">beginsaldo van ${datumNL(eersteScheef.van)}</b>: dat klopt al niet, dus het gat zit <b style="color:var(--inkdim)">vóór</b> dat afschrift en in de regels daarná zoeken heeft geen zin. Twee oorzaken: er is een afschrift over de periode ervóór nooit ingelezen (lees die <b style="color:var(--inkdim)">.sta</b>-bestanden alsnog in \u2014 dubbele regels worden overgeslagen), of het <b style="color:var(--inkdim)">beginsaldo</b> van de rekening zelf sluit niet aan op de stand vlak vóór je eerste bankregel.`
         : sluitAan
@@ -626,7 +645,15 @@
     ov.querySelector('#kk').innerHTML =
       `<div class="mut" style="font-size:13px">${datumNL(line.datum)} · ${esc(line.tegenrekening_naam || '')} · <b>${euro(line.bedrag)}</b></div>` +
       (sug.length
-        ? `<table style="margin-top:8px"><tbody>${sug.map((s) => `<tr><td class="num" style="text-align:left">${datumNL(s.datum)}</td><td>${esc(s.omschrijving)}</td><td class="num">${euro(s.totaal)}</td><td class="r"><button class="btn btn-success" data-k="${s.id}" style="padding:4px 10px">koppel</button></td></tr>`).join('')}</tbody></table>`
+        ? `<table style="margin-top:8px"><tbody>${sug.map((s) => {
+            // Raakt de boeking je bankrekening niet (of voor een ander bedrag), dan
+            // trekt koppelen je banksaldo scheef. Typisch geval: een factuur die op
+            // debiteuren/crediteuren staat omdat hij nog niet betaald was — die hoort
+            // leeg te lopen via "overboeking", niet via koppelen.
+            const bankKant = line.afbij === 'af' ? line.bedrag : -line.bedrag;
+            const raakt = Math.abs(s.banktotaal - bankKant) < 0.005;
+            return `<tr><td class="num" style="text-align:left">${datumNL(s.datum)}</td><td>${esc(s.omschrijving)}${raakt ? '' : `<div class="mut" style="font-size:12px;color:var(--danger);line-height:1.4">\u26A0 Deze boeking zet ${euro(Math.abs(s.banktotaal))} op je bankrekening in plaats van ${euro(line.bedrag)}. Staat de factuur nog als onbetaald op debiteuren of crediteuren? Sluit dit venster en gebruik <b>overboeking</b>, dan loopt die post leeg.</div>`}</td><td class="num">${euro(s.totaal)}</td><td class="r"><button class="btn ${raakt ? 'btn-success' : 'btn-ghost'}" data-k="${s.id}" style="padding:4px 10px">koppel</button></td></tr>`;
+          }).join('')}</tbody></table>`
         : `<div class="mut" style="margin-top:10px">Geen boeking met hetzelfde bedrag gevonden. Sluit dit venster en gebruik <b>Boek</b> om een nieuwe boeking te maken (eventueel met factuur-PDF).</div>`);
     ov.querySelectorAll('[data-k]').forEach((b) => b.onclick = async () => { try { await api('bank_koppel', { id: line.id, transactieId: Number(b.dataset.k) }, 'POST'); toast('Gekoppeld ✓'); close(); refresh(); } catch (e) { toast(e.message, 'error'); } });
   }
@@ -1776,6 +1803,15 @@
         <button class="btn btn-brand" id="saveBetaal" style="margin-top:16px">Opslaan</button>
       </div>
       <div class="card p5" style="margin-bottom:24px">
+        <h2 style="font-size:14px;font-weight:500;color:var(--inkdim);margin:0 0 4px">Nog niet betaalde facturen</h2>
+        <p class="mut" style="font-size:12px;margin:0 0 16px;max-width:640px;line-height:1.5">Boek je een factuur die nog <b>niet betaald</b> is, dan hoort hij niet tegen je bankrekening: dan staat het geld in je grootboek al op je rekening terwijl de klant nog moet betalen. Met deze rekeningen krijg je bij <b>Betaald via</b> de extra keuze <b>nog niet betaald</b> \u2014 een verkoopfactuur komt dan op <b>debiteuren</b>, een inkoopfactuur op <b>crediteuren</b>. Zodra het geld is overgemaakt, letter je die bankregel via <b>overboeking</b> tegen dezelfde rekening af. Leeg laten kan ook: dan boek je zoals voorheen alles direct tegen de bank.</p>
+        <div class="row" style="max-width:640px">
+          <label class="field"><span>Debiteuren (verkoop)</span><select id="debRek"><option value="">— geen —</option>${state.accounts.filter((a) => a.type === 'actief' && !a.systeem).map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === s.debiteuren ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('')}</select></label>
+          <label class="field"><span>Crediteuren (inkoop)</span><select id="credRek"><option value="">— geen —</option>${state.accounts.filter((a) => a.type === 'passief' && !a.systeem).map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === s.crediteuren ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('')}</select></label>
+        </div>
+        <button class="btn btn-brand" id="saveOpen" style="margin-top:16px">Opslaan</button>
+      </div>
+      <div class="card p5" style="margin-bottom:24px">
         <h2 style="font-size:14px;font-weight:500;color:var(--inkdim);margin:0 0 4px">Anthropic API-sleutel</h2>
         <p class="mut" style="font-size:12px;margin:0 0 16px">${s.apiKeyFromConfig ? 'Ingesteld via config.php op de server.' : s.apiKeyConfigured ? 'Er is een sleutel opgeslagen. Vul een nieuwe in om te vervangen.' : 'Nog geen sleutel — nodig voor het uitlezen van PDF-facturen.'}</p>
         <div style="display:flex;gap:8px;align-items:flex-end;max-width:520px">
@@ -1809,6 +1845,12 @@
       try {
         await api('instellingen_opslaan', { betaalrekening: document.getElementById('betaalRek').value }, 'POST');
         toast('Standaard betaalrekening opgeslagen ✓'); await loadSettings();
+      } catch (e) { toast(e.message, 'error'); }
+    });
+    document.getElementById('saveOpen').addEventListener('click', async () => {
+      try {
+        await api('instellingen_opslaan', { debiteuren: document.getElementById('debRek').value, crediteuren: document.getElementById('credRek').value }, 'POST');
+        toast('Opgeslagen ✓'); await loadSettings();
       } catch (e) { toast(e.message, 'error'); }
     });
     document.getElementById('saveKey').addEventListener('click', async () => {
@@ -2126,6 +2168,17 @@
     function close() { ov.remove(); }
     const isVerlegd = isVerlegdRegime;
     const pctNum = () => pctGetal(st.pct);
+    /* Een factuur die nog niet betaald is hoort niet tegen je bankrekening: dan
+       staat het geld in je grootboek al op je rekening terwijl de klant nog moet
+       betalen, en loopt je banksaldo tot die dag vooruit. Zo'n factuur gaat op
+       debiteuren (verkoop) of crediteuren (inkoop). Komt de boeking van een
+       bankregel, dan is er juist wél betaald en bestaat die keuze niet. */
+    const openstaandRek = () => {
+      if (st.bruto != null) return null;
+      const nr = st.type === 'verkoop' ? (state.settings || {}).debiteuren : (state.settings || {}).crediteuren;
+      return nr ? accounts.find((a) => a.nummer === nr) : null;
+    };
+    const isOpenstaand = () => { const o = openstaandRek(); return !!o && st.betaal === o.nummer; };
     // Regime wijzigen betekent opnieuw splitsen. Deed de app dit niet, dan bleef het
     // door 1,21 gedeelde bedrag staan als je naar "geen (buitenland)" omschakelde en
     // werd er 1,57 te weinig van de bank afgeboekt.
@@ -2137,6 +2190,12 @@
     function opties(list, sel) {
       if (!list.length) return '<option value="">— geen rekeningen —</option>';
       return list.map((a) => `<option value="${esc(a.nummer)}" ${a.nummer === sel ? 'selected' : ''}>${esc(a.nummer)} — ${esc(a.naam)}</option>`).join('');
+    }
+    function betaalOpties() {
+      const open = openstaandRek();
+      if (!open) return opties(banken, st.betaal);
+      return `<optgroup label="Betaald via">${opties(banken, st.betaal)}</optgroup>`
+        + `<optgroup label="Nog niet betaald">${opties([open], st.betaal)}</optgroup>`;
     }
     // Eén plek waar excl./BTW/totaal uitgerekend worden, zodat de preview precies
     // laat zien wat de server boekt.
@@ -2177,6 +2236,12 @@
     function render() {
       const gbList = st.type === 'inkoop' ? kosten : omzet;
       if (!gbList.find((a) => a.nummer === st.grootboek)) st.grootboek = standaardGrootboek(gbList, st.type === 'inkoop' ? 'kosten' : 'opbrengsten');
+      // Wissel je van inkoop naar verkoop, dan wisselt crediteuren mee naar debiteuren.
+      const anderOpen = st.type === 'verkoop' ? (state.settings || {}).crediteuren : (state.settings || {}).debiteuren;
+      if (anderOpen && st.betaal === anderOpen) {
+        const o = openstaandRek();
+        st.betaal = o ? o.nummer : (betaalRek(banken) || (banken[0] || {}).nummer || '');
+      }
       const pctOpts = [['21', '21%'], ['9', '9%'], ['0', '0%'], ['geen', 'geen (buitenland)'], ['verlegd', 'BTW verlegd — EU (4b)'], ['verlegd_niet_eu', 'BTW verlegd — buiten EU (4a)']].map(([v, l]) => `<option value="${v}" ${String(st.pct) === v ? 'selected' : ''}>${l}</option>`).join('');
       ov.innerHTML = `<div class="modal"><div class="modal-head"><h2>Boeking invoeren</h2><button class="x">✕</button></div>
         <div class="modal-body">
@@ -2198,9 +2263,10 @@
           ${st.datumTip ? `<div class="help" style="border-color:rgba(245,158,11,.5);background:rgba(245,158,11,.12)">⚠ De factuur is gedateerd <b>${datumNL(st.datumTip)}</b>, maar er is op <b>${datumNL(st.datum)}</b> betaald. De <b>betaaldatum</b> is aangehouden: anders gaat het geld in je grootboek op een andere dag van je rekening dan in het echt, en sluit je banksaldo niet meer aan. Hoort de BTW in een eerder kwartaal? Kies dat hieronder bij <b>BTW meenemen in aangifte</b>.</div>` : ''}
           <div class="row">
             <label class="field"><span>${st.type === 'inkoop' ? 'Kostenrekening' : 'Omzetrekening'}</span><select id="gb">${opties(gbList, st.grootboek)}</select></label>
-            <label class="field"><span>Betaald via</span><select id="bet">${opties(banken, st.betaal)}</select></label>
+            <label class="field"><span>Betaald via</span><select id="bet">${betaalOpties()}</select></label>
           </div>
           ${st.tip ? `<div class="mut" style="font-size:12px;line-height:1.45;color:var(--warning)">↳ voorgesteld: ${esc(st.tip)}. Controleer het even en pas het aan als het niet klopt.</div>` : ''}
+          ${isOpenstaand() ? `<div class="help">Deze factuur telt als <b>nog niet betaald</b>: het bedrag komt op <b>${esc(st.betaal)} — ${esc(naam(st.betaal))}</b> te staan en niet op je bank. Zodra het geld is overgemaakt, boek je die bankregel op de <b>Bank</b>-pagina via <b>overboeking</b> tegen diezelfde rekening. Dan loopt de post leeg en klopt je banksaldo op elke dag. ${st.type === 'verkoop' ? 'De BTW is wél nu al verschuldigd \u2014 die hoort in het kwartaal van de factuurdatum.' : 'De voorbelasting mag je nu al aftrekken, in het kwartaal van de factuurdatum.'}</div>` : ''}
           ${st.pct !== 'geen' ? `<label class="field"><span>BTW meenemen in aangifte</span><select id="btwper">
             <option value="">kwartaal van de boekingsdatum hierboven</option>
             ${btwKwartaalOpties(st.datum).map((o) => `<option value="${o.waarde}" ${st.btwPeriode === o.waarde ? 'selected' : ''}>${o.label}</option>`).join('')}
@@ -2669,7 +2735,7 @@
     debet: { q: 'Wat betekenen debet en credit (dubbel boekhouden)?', a: 'Elke boeking heeft twee gelijke kanten. <b>Bezittingen en kosten</b> nemen toe aan de <b>debet</b>-kant; <b>schulden, eigen vermogen en opbrengsten</b> aan de <b>credit</b>-kant. De app bewaakt dat debet = credit, dus een boeking kan nooit uit balans raken.' },
     inkoop: { q: 'Hoe boek ik een inkoopfactuur?', a: 'Ga naar <b>Facturen invoeren → Inkoop</b> en upload de PDF. De AI leest bedrag, BTW en datum. Kies de <b>kostenrekening</b> (waar gaat het over) en de <b>betaalrekening</b> (je bank). De app splitst automatisch bedrag excl. BTW + de voorbelasting op <code>{{btwVoor}}</code>.' },
     buitenland: { q: 'Hoe boek ik een buitenlandse leverancier (Anthropic, Hosting.com) zonder NL-BTW?', a: 'Leg de leverancier vast (Bank-pagina → Leveranciers) met het juiste <b>BTW-regime</b>: <b>geen</b> voor niet-EU (bv. VS — geen BTW, telt niet mee in de aangifte) of <b>verlegd</b> voor EU-diensten (de BTW wordt naar jou verlegd). Bij "verlegd" boekt de app de BTW zowel als verschuldigd (<code>{{btwVersch}}</code>) als voorbelasting (<code>{{btwVoor}}</code>) — saldo € 0 — en zet het in rubriek 4b. Kies bij de boeking hetzelfde bij "BTW".' },
-    verkoop: { q: 'Hoe boek ik een verkoopfactuur?', a: 'Ga naar <b>Facturen invoeren → Verkoop</b>, vul het bedrag excl. BTW en het tarief (21% of 9%) in. De app boekt de omzet als opbrengst en de verschuldigde BTW op <code>{{btwVersch}}</code>.' },
+    verkoop: { q: 'Hoe boek ik een verkoopfactuur?', a: 'Ga naar <b>Facturen invoeren → Verkoop</b>, vul het bedrag excl. BTW en het tarief (21% of 9%) in. De app boekt de omzet als opbrengst en de verschuldigde BTW op <code>{{btwVersch}}</code>. Is de factuur <b>nog niet betaald</b>, kies dan bij <b>Betaald via</b> de optie onder "nog niet betaald" (debiteuren): dan staat het bedrag als vordering op je balans in plaats van alsof het al op je rekening staat, en klopt je banksaldo op elke dag. Komt het geld binnen, dan letter je die bankregel af via <b>overboeking</b> tegen debiteuren. De BTW is wel nu al verschuldigd \u2014 in het kwartaal van de factuurdatum.' },
     prive: { q: 'Hoe boek ik geld dat ik vanuit GIBS naar privé haal (lenen van de BV)?', a: 'Dit is <b>geen kost</b> maar een verschuiving naar je <b>rekening-courant</b> met de BV. Op de <b>Bank</b>-pagina bij die afschrijving → <b>overboeking</b> → kies als tegenrekening je rekening-courant (bijv. <code>1310 Rekening-courant DGA</code>). Boeking: <code>DR 1310 / CR bank</code>. Je schuld aan de BV neemt toe. Stort je geld terug, dan draai je het om.' },
     voorstelRekening: { q: 'De kostenrekening staat al ingevuld — waar komt dat voorstel vandaan?', a: 'De app vult <b>kostenrekening</b> en <b>betaald via</b> alvast in op twee manieren. <b>(1) De leverancier:</b> heb je die vastgelegd (Bank-pagina → Leveranciers) met een <b>standaard kostenrekening</b>, dan wint die altijd. <b>(2) Je eigen historie:</b> zo niet, dan kijkt de app hoe je diezelfde leverancier de vorige keren boekte en stelt dezelfde rekening voor. Je hoeft dus niets in te stellen — boek de bunq-factuur één keer op Bankkosten en volgende maand staat het er vanzelf. Onder de keuzelijsten zie je <b>waarom</b> iets is voorgesteld. Het blijft een voorstel: controleer het en pas het aan vóór je op <b>Boeken</b> klikt.' },
     knoppen: { q: 'Wat is het verschil tussen Boek, Koppel, Overboeking en Negeer?', a: '<b>Boek</b> = een nieuwe boeking maken (factuur, upload de PDF). <b>Overboeking</b> = geen factuur maar een verschuiving (privé, BTW-betaling, geld tussen banken). <b>Koppel</b> = verbinden aan een boeking die je al had — verschijnt alléén als er een boeking met hetzelfde bedrag bestaat. <b>Negeer</b> = niet relevant.' },

@@ -12,6 +12,26 @@ function bh_bedrag(float $n): string {
     return "\u{20AC} " . number_format($n, 2, ',', '.');
 }
 
+/* Rekening voor een factuur die nog niet betaald is: debiteuren bij een verkoop,
+   crediteuren bij een inkoop. Zo staat een onbetaalde factuur als vordering of
+   schuld op de balans in plaats van alsof het geld al op je bankrekening staat —
+   anders loopt je banksaldo vooruit tot de klant betaalt.
+
+   Instelbaar; zonder instelling zoeken we hem op naam in het schema, want een
+   rekeningschema uit een auditfile heeft die rekeningen al (1300 / 1600). */
+function bh_tegenrekening(string $soort): string {
+    $soort = $soort === 'debiteuren' ? 'debiteuren' : 'crediteuren';
+    $gezet = trim(bh_instelling($soort, ''));
+    if ($gezet !== '') return $gezet;
+    $q = db()->prepare(
+        "SELECT nummer FROM rekeningen
+          WHERE type = :t AND naam LIKE :n AND naam NOT LIKE '%voorziening%' AND naam NOT LIKE '%dubieuze%'
+          ORDER BY nummer ASC LIMIT 1"
+    );
+    $q->execute([':t' => $soort === 'debiteuren' ? 'actief' : 'passief', ':n' => '%' . $soort . '%']);
+    return (string) ($q->fetchColumn() ?: '');
+}
+
 // Systeemrekeningen borgen (niet verwijderbaar).
 function bh_ensure_systeem(): void {
     $rekeningen = [

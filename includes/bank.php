@@ -321,6 +321,33 @@ function bank_afschriften_aansluiting(): array {
         $vorigeTot = (string) $r['tot'];
         $uit[] = $a;
     }
+
+    /* Een afwijking tússen twee punten waar het grootboek wél aansluit, kan geen
+       ontbrekende of dubbele boeking zijn: over dat hele stuk is de beweging van je
+       grootboek immers gelijk aan die van de bank. Dan staat er dus alleen iets op
+       een andere dag geboekt dan het geld bewoog. Dat onderscheid is het hele
+       verschil tussen "ga zoeken" en "klaar". Overlappende afschriften maken het
+       zichtbaar: het oudere bestand loopt tot midden in een periode die het
+       nieuwere, aansluitende bestand overlapt. */
+    $anker = [];
+    foreach ($uit as $a) {
+        if (isset($a['verschilBegin']) && abs($a['verschilBegin']) < 0.005) $anker[] = $a['voorVan'];
+        if (isset($a['verschilEind'])  && abs($a['verschilEind'])  < 0.005) $anker[] = $a['tot'];
+    }
+    foreach ($uit as &$a) {
+        foreach ([['verschilBegin', 'voorVan', 'timingBegin'], ['verschilEind', 'tot', 'timingEind']] as [$veld, $datumVeld, $vlag]) {
+            $a[$vlag] = null;
+            if (!isset($a[$veld]) || abs($a[$veld]) < 0.005) continue;
+            $d = (string) $a[$datumVeld];
+            $voor = null; $na = null;
+            foreach ($anker as $ad) {
+                if ($ad < $d && ($voor === null || $ad > $voor)) $voor = $ad;   // dichtstbijzijnde ervóór
+                if ($ad > $d && ($na === null || $ad < $na)) $na = $ad;          // dichtstbijzijnde erná
+            }
+            if ($voor !== null && $na !== null) $a[$vlag] = ['voor' => $voor, 'na' => $na];
+        }
+    }
+    unset($a);
     return $uit;
 }
 
@@ -459,7 +486,7 @@ function bank_suggesties(int $id): array {
     if (!$bt) return [];
     $bankLeg = bank_leg_sql('t.id');
     $q = db()->prepare(
-        "SELECT x.id, x.datum, x.omschrijving, x.factuur_nummer, x.totaal FROM (
+        "SELECT x.id, x.datum, x.omschrijving, x.factuur_nummer, x.totaal, x.banktotaal FROM (
             SELECT t.id, t.datum, t.omschrijving, t.factuur_nummer,
                    (SELECT COALESCE(SUM(debet),0) FROM transactie_regels r WHERE r.transactie_id = t.id) AS totaal,
                    $bankLeg AS banktotaal
@@ -476,7 +503,14 @@ function bank_suggesties(int $id): array {
         ':datum' => $bt['datum'],
     ]);
     $rows = $q->fetchAll();
-    foreach ($rows as &$r) { $r['id'] = (int) $r['id']; $r['totaal'] = (float) $r['totaal']; }
+    // banktotaal = wat die boeking volgens het grootboek met de bank doet. Staat een
+    // factuur op debiteuren/crediteuren (nog niet betaald), dan is dat 0 en zou
+    // koppelen je banksaldo scheeftrekken; de koppelknop waarschuwt daarvoor.
+    foreach ($rows as &$r) {
+        $r['id'] = (int) $r['id'];
+        $r['totaal'] = (float) $r['totaal'];
+        $r['banktotaal'] = (float) $r['banktotaal'];
+    }
     return $rows;
 }
 

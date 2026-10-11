@@ -60,6 +60,8 @@ switch ($actie) {
             'btwVerschuldigd'  => bh_instelling('btw_verschuldigd', '1910'),
             'betaalrekening'   => bh_instelling('betaalrekening', ''),
             'btwAfrekenrekening' => bh_instelling('btw_afrekenrekening', ''),
+            'debiteuren'       => bh_tegenrekening('debiteuren'),
+            'crediteuren'      => bh_tegenrekening('crediteuren'),
             'btwCheck'         => bh_btw_rekening_check(),
         ]);
     }
@@ -81,7 +83,8 @@ switch ($actie) {
         }
         // Standaard betaalrekening ("betaald via") en de tussenrekening voor de
         // BTW-afrekening. Beide optioneel; leeg = geen voorkeur / oude gedrag.
-        foreach ([['betaalrekening', 'betaalrekening'], ['btwAfrekenrekening', 'btw_afrekenrekening']] as [$veld, $sleutel]) {
+        foreach ([['betaalrekening', 'betaalrekening'], ['btwAfrekenrekening', 'btw_afrekenrekening'],
+                  ['debiteuren', 'debiteuren'], ['crediteuren', 'crediteuren']] as [$veld, $sleutel]) {
             if (!isset($in[$veld])) continue;
             $nr = trim((string) $in[$veld]);
             if ($nr !== '') {
